@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>El Nano - Cocina</title>
+<link rel="manifest" href="manifest.json" />
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #1a1a1a; color: white; }
+  header { background: #b8232f; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; }
+  header h1 { font-size: 18px; margin: 0; }
+  select { padding: 8px; border-radius: 6px; border: none; font-size: 14px; }
+  .board { display: flex; gap: 12px; padding: 12px; overflow-x: auto; }
+  .columna { flex: 1; min-width: 280px; }
+  .columna h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 1px; opacity: 0.7; margin-bottom: 10px; }
+  .ticket { background: #2b2b2b; border-radius: 10px; padding: 12px; margin-bottom: 10px; border-left: 5px solid #888; }
+  .ticket.recibido { border-color: #e0a800; }
+  .ticket.en_preparacion { border-color: #007bff; }
+  .ticket.listo { border-color: #28a745; }
+  .ticket .top { display: flex; justify-content: space-between; font-size: 13px; opacity: 0.7; margin-bottom: 6px; }
+  .ticket .items { font-size: 15px; line-height: 1.5; }
+  .ticket .items .item { display: flex; justify-content: space-between; }
+  .ticket .cliente { font-size: 13px; margin-top: 6px; opacity: 0.8; }
+  .ticket button { margin-top: 10px; width: 100%; padding: 10px; border: none; border-radius: 6px; font-size: 14px; font-weight: bold; cursor: pointer; }
+  .btn-avanzar { background: #007bff; color: white; }
+  .btn-listo { background: #28a745; color: white; }
+  .btn-entregar { background: #555; color: white; }
+</style>
+</head>
+<body>
+<header>
+  <h1>👨‍🍳 El Nano — Cocina</h1>
+  <select id="sucursal-select"></select>
+</header>
+
+<div class="board">
+  <div class="columna">
+    <h2>Recibido</h2>
+    <div id="col-recibido"></div>
+  </div>
+  <div class="columna">
+    <h2>En preparación</h2>
+    <div id="col-en_preparacion"></div>
+  </div>
+  <div class="columna">
+    <h2>Listo</h2>
+    <div id="col-listo"></div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
