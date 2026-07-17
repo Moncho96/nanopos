@@ -123,6 +123,8 @@ app.post('/api/pedidos', async (req, res) => {
 
     const pedidoCompleto = { ...pedido, items: itemsConNombre };
 
+    io.to(`sucursal_${sucursal_id}`).emit('nuevo_pedido', pedidoCompleto);
+
     res.json(pedidoCompleto);
   } catch (err) {
     await client.query('ROLLBACK');
