@@ -16,7 +16,10 @@ app.use('/pos', express.static(path.join(__dirname, 'public/pos')));
 app.use('/kds', express.static(path.join(__dirname, 'public/kds')));
 app.get('/', (req, res) => res.redirect('/pos'));
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
