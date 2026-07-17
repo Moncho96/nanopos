@@ -4,7 +4,7 @@ const state = {
   productos: [],
   categoriaActiva: null,
   carrito: [], // { producto_id, nombre, precio, cantidad }
-  tipoPedido: 'mostrador',
+  tipoPedido: 'mesa',
 };
 
 async function cargarInicial() {
@@ -307,3 +307,130 @@ async function enviarPedido() {
 document.getElementById('btn-enviar').addEventListener('click', enviarPedido);
 
 cargarInicial();
+
+// ==================== VISTA DE COBRO ====================
+
+const TIPO_LABELS = { mesa: 'Mesa', para_llevar: 'Para llevar', domicilio: 'Domicilio' };
+const METODO_LABELS = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia' };
+let pedidosCobro = [];
+let filtroCobro = 'pendientes';
+
+document.getElementById('nav-pedido').addEventListener('click', () => cambiarVista('pedido'));
+document.getElementById('nav-cobro').addEventListener('click', () => cambiarVista('cobro'));
+
+function cambiarVista(vista) {
+  document.getElementById('vista-pedido').style.display = vista === 'pedido' ? 'block' : 'none';
+  document.getElementById('vista-cobro').style.display = vista === 'cobro' ? 'block' : 'none';
+  document.getElementById('nav-pedido').classList.toggle('active', vista === 'pedido');
+  document.getElementById('nav-cobro').classList.toggle('active', vista === 'cobro');
+  if (vista === 'cobro') cargarPedidosCobro();
+}
+
+// Si cambian de sucursal mientras están en la vista de cobro, refresca esa lista también
+document.getElementById('sucursal-select').addEventListener('change', () => {
+  if (document.getElementById('vista-cobro').style.display !== 'none') cargarPedidosCobro();
+});
+
+document.querySelectorAll('.filtro').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    filtroCobro = btn.dataset.filtro;
+    document.querySelectorAll('.filtro').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    cargarPedidosCobro();
+  });
+});
+
+async function cargarPedidosCobro() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  let url = `/api/pedidos?sucursal_id=${sucursalId}`;
+  if (filtroCobro === 'pendientes') url += '&pagado=false';
+  if (filtroCobro === 'cobrados') url += '&pagado=true';
+  pedidosCobro = await fetch(url).then((r) => r.json());
+  renderCobro();
+}
+
+function renderCobro() {
+  const cont = document.getElementById('lista-cobro');
+  const sinPedidos = document.getElementById('sin-pedidos');
+
+  if (!pedidosCobro.length) {
+    cont.innerHTML = '';
+    sinPedidos.style.display = 'block';
+    return;
+  }
+  sinPedidos.style.display = 'none';
+
+  cont.innerHTML = pedidosCobro.map((p) => renderCardCobro(p)).join('');
+
+  document.querySelectorAll('[data-cobrar]').forEach((btn) => {
+    btn.addEventListener('click', () => abrirModalCobro(Number(btn.dataset.cobrar)));
+  });
+}
+
+function renderCardCobro(pedido) {
+  const hora = new Date(pedido.creado_en).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+  const itemsTexto = pedido.items
+    .map((it) => {
+      const opciones = (it.opciones_seleccionadas || []).map((o) => o.nombre).join(', ');
+      return `${it.cantidad}x ${it.producto_nombre}${opciones ? ` (${opciones})` : ''}`;
+    })
+    .join('<br>');
+
+  const tipoLabel = TIPO_LABELS[pedido.tipo] || pedido.tipo;
+
+  return `
+    <div class="pedido-card">
+      <div class="pedido-top">
+        <span class="id">#${pedido.id} · ${hora}</span>
+        <span class="badge badge-${pedido.tipo}">${tipoLabel}</span>
+      </div>
+      <div class="pedido-items-cobro">${itemsTexto}</div>
+      ${pedido.cliente_nombre ? `<div class="pedido-cliente">👤 ${pedido.cliente_nombre} · ${pedido.cliente_telefono || ''}</div>` : ''}
+      <div class="pedido-bottom">
+        <span class="total">$${Number(pedido.total).toFixed(2)}</span>
+        ${
+          pedido.pagado
+            ? `<span class="pago-info">✅ ${METODO_LABELS[pedido.metodo_pago] || pedido.metodo_pago}</span>`
+            : `<button class="btn-cobrar" data-cobrar="${pedido.id}">Cobrar</button>`
+        }
+      </div>
+    </div>`;
+}
+
+function abrirModalCobro(pedidoId) {
+  const pedido = pedidosCobro.find((p) => p.id === pedidoId);
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-cobro">
+      <div class="modal-box">
+        <h3>Cobrar pedido #${pedido.id}</h3>
+        <div class="total-modal">$${Number(pedido.total).toFixed(2)}</div>
+        <button class="metodo-btn" data-metodo="efectivo">💵 Efectivo</button>
+        <button class="metodo-btn" data-metodo="tarjeta">💳 Tarjeta</button>
+        <button class="metodo-btn" data-metodo="transferencia">📱 Transferencia</button>
+        <button class="btn-cancelar-modal" id="modal-cancelar-cobro">Cancelar</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  document.getElementById('modal-overlay-cobro').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-cobro') cerrarModalCobro();
+  });
+  document.getElementById('modal-cancelar-cobro').addEventListener('click', cerrarModalCobro);
+  document.querySelectorAll('.metodo-btn').forEach((btn) => {
+    btn.addEventListener('click', () => cobrarPedido(pedidoId, btn.dataset.metodo));
+  });
+}
+
+function cerrarModalCobro() {
+  document.getElementById('modal-container').innerHTML = '';
+}
+
+async function cobrarPedido(pedidoId, metodo) {
+  await fetch(`/api/pedidos/${pedidoId}/pago`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ metodo_pago: metodo }),
+  });
+  cerrarModalCobro();
+  cargarPedidosCobro();
+}

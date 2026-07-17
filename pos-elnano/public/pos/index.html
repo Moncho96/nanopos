@@ -51,14 +51,46 @@
   .modal-botones button { flex: 1; padding: 12px; border-radius: 8px; font-size: 15px; border: none; cursor: pointer; }
   .btn-cancelar { background: #eee; color: #333; }
   .btn-agregar { background: #1a7d3a; color: white; font-weight: bold; }
+
+  .nav-vistas { display: flex; gap: 8px; padding: 10px 12px 0; background: #f4f4f4; }
+  .nav-vistas button { flex: 1; padding: 12px; border: none; border-radius: 8px 8px 0 0; background: #ddd; font-size: 15px; font-weight: 600; cursor: pointer; }
+  .nav-vistas button.active { background: white; color: #b8232f; }
+
+  .filtros { display: flex; gap: 8px; padding: 12px; flex-wrap: wrap; }
+  .filtro { padding: 8px 14px; background: #eee; border-radius: 20px; cursor: pointer; font-size: 14px; border: none; }
+  .filtro.active { background: #b8232f; color: white; }
+  .lista-cobro { padding: 0 12px 24px; display: flex; flex-direction: column; gap: 10px; }
+  .pedido-card { background: white; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+  .pedido-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .pedido-top .id { font-weight: bold; font-size: 15px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .badge-mesa { background: #e7f0ff; color: #0056b3; }
+  .badge-para_llevar { background: #fff3cd; color: #856404; }
+  .badge-domicilio { background: #e2d9f3; color: #5a2ca0; }
+  .pedido-items-cobro { font-size: 13px; color: #555; margin-bottom: 8px; line-height: 1.5; }
+  .pedido-cliente { font-size: 13px; color: #777; margin-bottom: 8px; }
+  .pedido-bottom { display: flex; justify-content: space-between; align-items: center; }
+  .btn-cobrar { background: #1a7d3a; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; }
+  .pago-info { font-size: 13px; color: #1a7d3a; font-weight: 600; }
+  .modal-box .total-modal { font-size: 22px; font-weight: bold; margin: 10px 0 16px; }
+  .metodo-btn { width: 100%; padding: 14px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 8px; background: white; font-size: 15px; cursor: pointer; text-align: left; }
+  .metodo-btn:active { background: #f4f4f4; }
+  .btn-cancelar-modal { width: 100%; padding: 10px; margin-top: 8px; background: none; border: none; color: #888; cursor: pointer; }
+  #sin-pedidos { text-align: center; padding: 40px; color: #999; }
 </style>
 </head>
 <body>
 <header>
-  <h1>🌮 El Nano — Toma de pedidos</h1>
+  <h1>🌮 El Nano</h1>
   <select id="sucursal-select"></select>
 </header>
 
+<div class="nav-vistas">
+  <button id="nav-pedido" class="active">📝 Tomar pedido</button>
+  <button id="nav-cobro">💵 Cobrar</button>
+</div>
+
+<div id="vista-pedido">
 <div class="layout">
   <div class="menu">
     <div class="tabs" id="tabs"></div>
@@ -74,7 +106,7 @@
     </div>
 
     <div class="tipo-pedido">
-      <button data-tipo="mostrador" class="active">Mostrador</button>
+      <button data-tipo="mesa" class="active">Mesa</button>
       <button data-tipo="para_llevar">Para llevar</button>
       <button data-tipo="domicilio">Domicilio</button>
     </div>
@@ -84,6 +116,17 @@
     <button class="btn-enviar" id="btn-enviar">Enviar a cocina</button>
     <div id="status-msg"></div>
   </div>
+</div>
+</div>
+
+<div id="vista-cobro" style="display:none">
+  <div class="filtros">
+    <button class="filtro active" data-filtro="pendientes">Por cobrar</button>
+    <button class="filtro" data-filtro="cobrados">Cobrados</button>
+    <button class="filtro" data-filtro="todos">Todos</button>
+  </div>
+  <div class="lista-cobro" id="lista-cobro"></div>
+  <div id="sin-pedidos" style="display:none">No hay pedidos aquí</div>
 </div>
 
 <div id="modal-container"></div>
