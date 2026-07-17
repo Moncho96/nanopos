@@ -44,7 +44,13 @@ function render() {
 function renderTicket(pedido) {
   const hora = new Date(pedido.creado_en).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
   const items = pedido.items
-    .map((it) => `<div class="item"><span>${it.cantidad}x ${it.producto_nombre}</span></div>`)
+    .map((it) => {
+      const opciones = it.opciones_seleccionadas || [];
+      const detalle = opciones.length
+        ? `<div style="font-size:12px;opacity:0.75;margin-left:12px">${opciones.map((o) => o.nombre).join(', ')}</div>`
+        : '';
+      return `<div class="item"><span>${it.cantidad}x ${it.producto_nombre}</span></div>${detalle}`;
+    })
     .join('');
 
   let boton = '';
