@@ -16,10 +16,7 @@ app.use('/pos', express.static(path.join(__dirname, 'public/pos')));
 app.use('/kds', express.static(path.join(__dirname, 'public/kds')));
 app.get('/', (req, res) => res.redirect('/pos'));
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
@@ -44,10 +41,34 @@ app.get('/api/categorias', async (req, res) => {
 });
 
 app.get('/api/productos', async (req, res) => {
-  const { rows } = await pool.query(
+  const { rows: productos } = await pool.query(
     'SELECT * FROM productos WHERE disponible = true ORDER BY categoria_id, nombre'
   );
-  res.json(rows);
+  const { rows: grupos } = await pool.query(
+    'SELECT * FROM grupos_modificadores ORDER BY producto_id, orden, id'
+  );
+  const { rows: opciones } = await pool.query(
+    'SELECT * FROM opciones_modificador ORDER BY grupo_id, orden, id'
+  );
+
+  const opcionesPorGrupo = {};
+  opciones.forEach((o) => {
+    if (!opcionesPorGrupo[o.grupo_id]) opcionesPorGrupo[o.grupo_id] = [];
+    opcionesPorGrupo[o.grupo_id].push(o);
+  });
+
+  const gruposPorProducto = {};
+  grupos.forEach((g) => {
+    g.opciones = opcionesPorGrupo[g.id] || [];
+    if (!gruposPorProducto[g.producto_id]) gruposPorProducto[g.producto_id] = [];
+    gruposPorProducto[g.producto_id].push(g);
+  });
+
+  productos.forEach((p) => {
+    p.grupos_modificadores = gruposPorProducto[p.id] || [];
+  });
+
+  res.json(productos);
 });
 
 // ---------- Clientes ----------
@@ -101,28 +122,24 @@ app.post('/api/pedidos', async (req, res) => {
     const itemRows = [];
     for (const it of items) {
       const itemRes = await client.query(
-        `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, notas)
-         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-        [pedido.id, it.producto_id, it.cantidad, it.precio_unitario, it.notas || null]
+        `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, notas, opciones_seleccionadas)
+         VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+        [
+          pedido.id,
+          it.producto_id,
+          it.cantidad,
+          it.precio_unitario,
+          it.notas || null,
+          JSON.stringify(it.opciones_seleccionadas || []),
+        ]
       );
       itemRows.push(itemRes.rows[0]);
     }
 
-    // Trae el nombre del producto para cada item, para que el KDS lo muestre
-    // en tiempo real sin tener que recargar la página
-    const ids = itemRows.map((r) => r.id);
-    const { rows: itemsConNombre } = await client.query(
-      `SELECT pi.*, pr.nombre AS producto_nombre, pr.estacion
-       FROM pedido_items pi
-       JOIN productos pr ON pr.id = pi.producto_id
-       WHERE pi.id = ANY($1)`,
-      [ids]
-    );
-
     await client.query('COMMIT');
 
-    const pedidoCompleto = { ...pedido, items: itemsConNombre };
-
+    const pedidoCompleto = { ...pedido, items: itemRows };
+    // Avisa en tiempo real al monitor de cocina de esa sucursal
     io.to(`sucursal_${sucursal_id}`).emit('nuevo_pedido', pedidoCompleto);
 
     res.json(pedidoCompleto);
