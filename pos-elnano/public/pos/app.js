@@ -58,26 +58,41 @@ function renderProductos() {
 
 function agregarAlCarrito(productoId) {
   const producto = state.productos.find((p) => p.id === productoId);
-  const existente = state.carrito.find((it) => it.producto_id === productoId);
-  if (existente) {
-    existente.cantidad += 1;
-  } else {
-    state.carrito.push({
+  const grupos = producto.grupos_modificadores || [];
+
+  if (grupos.length === 0) {
+    // Producto simple, sin modificadores: se agrega directo como antes
+    agregarItemAlCarrito({
       producto_id: producto.id,
       nombre: producto.nombre,
       precio: Number(producto.precio),
       cantidad: 1,
+      opciones_seleccionadas: [],
     });
+    return;
+  }
+
+  abrirModalModificadores(producto, grupos);
+}
+
+function agregarItemAlCarrito(item) {
+  // Cada combinación distinta de opciones se trata como línea separada en el carrito
+  const clave = item.producto_id + '|' + JSON.stringify(item.opciones_seleccionadas);
+  const existente = state.carrito.find((it) => it._clave === clave);
+  if (existente) {
+    existente.cantidad += item.cantidad;
+  } else {
+    state.carrito.push({ ...item, _clave: clave });
   }
   renderCarrito();
 }
 
-function quitarDelCarrito(productoId) {
-  const item = state.carrito.find((it) => it.producto_id === productoId);
+function quitarDelCarrito(clave) {
+  const item = state.carrito.find((it) => it._clave === clave);
   if (!item) return;
   item.cantidad -= 1;
   if (item.cantidad <= 0) {
-    state.carrito = state.carrito.filter((it) => it.producto_id !== productoId);
+    state.carrito = state.carrito.filter((it) => it._clave !== clave);
   }
   renderCarrito();
 }
@@ -85,23 +100,144 @@ function quitarDelCarrito(productoId) {
 function renderCarrito() {
   const cont = document.getElementById('cart-items');
   cont.innerHTML = state.carrito
-    .map(
-      (it) => `
+    .map((it) => {
+      const detalle = it.opciones_seleccionadas.map((o) => o.nombre).join(', ');
+      return `
       <div class="cart-item">
-        <span>${it.cantidad}x ${it.nombre}</span>
+        <span>${it.cantidad}x ${it.nombre}${detalle ? `<br><small style="color:#888">${detalle}</small>` : ''}</span>
         <span>
           $${(it.precio * it.cantidad).toFixed(2)}
-          <button data-id="${it.producto_id}">×</button>
+          <button data-clave="${it._clave}">×</button>
         </span>
-      </div>`
-    )
+      </div>`;
+    })
     .join('');
   cont.querySelectorAll('button').forEach((btn) => {
-    btn.addEventListener('click', () => quitarDelCarrito(Number(btn.dataset.id)));
+    btn.addEventListener('click', () => quitarDelCarrito(btn.dataset.clave));
   });
 
   const total = state.carrito.reduce((sum, it) => sum + it.precio * it.cantidad, 0);
   document.getElementById('total').textContent = total.toFixed(2);
+}
+
+// ---------- Modal de modificadores ----------
+function abrirModalModificadores(producto, grupos) {
+  const seleccion = {}; // grupo.id -> opcion (variante) u opcion.id[] (extra)
+  grupos.forEach((g) => {
+    seleccion[g.id] = g.tipo === 'extra' ? [] : (g.obligatorio ? g.opciones[0] : null);
+  });
+  let cantidad = 1;
+
+  function calcularPrecio() {
+    let precio = Number(producto.precio);
+    grupos.forEach((g) => {
+      if (g.tipo === 'variante' && seleccion[g.id]) {
+        precio = Number(seleccion[g.id].precio); // reemplaza el precio base
+      }
+      if (g.tipo === 'extra') {
+        seleccion[g.id].forEach((op) => { precio += Number(op.precio); });
+      }
+    });
+    return precio;
+  }
+
+  function render() {
+    const precioUnit = calcularPrecio();
+    const html = `
+      <div class="modal-overlay" id="modal-overlay">
+        <div class="modal-box">
+          <h3>${producto.nombre}</h3>
+          ${grupos
+            .map(
+              (g) => `
+            <div class="modal-grupo">
+              <div class="modal-grupo-titulo">${g.nombre}${g.tipo === 'variante' ? ' (elige uno)' : ' (opcional)'}</div>
+              ${g.opciones
+                .map((op) => {
+                  const isSelected =
+                    g.tipo === 'variante'
+                      ? seleccion[g.id] && seleccion[g.id].id === op.id
+                      : seleccion[g.id].some((s) => s.id === op.id);
+                  return `
+                  <div class="modal-opcion ${isSelected ? 'selected' : ''}" data-grupo="${g.id}" data-opcion="${op.id}">
+                    <span>${op.nombre}</span>
+                    <span class="precio">${g.tipo === 'extra' ? '+' : ''}$${Number(op.precio).toFixed(2)}</span>
+                  </div>`;
+                })
+                .join('')}
+            </div>`
+            )
+            .join('')}
+          <div class="modal-cantidad">
+            <button id="modal-menos">−</button>
+            <span id="modal-cant" style="font-size:18px;min-width:24px;text-align:center">${cantidad}</span>
+            <button id="modal-mas">+</button>
+          </div>
+          <div class="modal-botones">
+            <button class="btn-cancelar" id="modal-cancelar">Cancelar</button>
+            <button class="btn-agregar" id="modal-agregar">Agregar · $${(precioUnit * cantidad).toFixed(2)}</button>
+          </div>
+        </div>
+      </div>`;
+    document.getElementById('modal-container').innerHTML = html;
+
+    document.getElementById('modal-overlay').addEventListener('click', (e) => {
+      if (e.target.id === 'modal-overlay') cerrar();
+    });
+    document.getElementById('modal-cancelar').addEventListener('click', cerrar);
+    document.getElementById('modal-menos').addEventListener('click', () => {
+      if (cantidad > 1) cantidad -= 1;
+      render();
+    });
+    document.getElementById('modal-mas').addEventListener('click', () => {
+      cantidad += 1;
+      render();
+    });
+    document.querySelectorAll('.modal-opcion').forEach((el) => {
+      el.addEventListener('click', () => {
+        const grupoId = Number(el.dataset.grupo);
+        const opcionId = Number(el.dataset.opcion);
+        const grupo = grupos.find((g) => g.id === grupoId);
+        const opcion = grupo.opciones.find((o) => o.id === opcionId);
+        if (grupo.tipo === 'variante') {
+          seleccion[grupoId] = opcion;
+        } else {
+          const arr = seleccion[grupoId];
+          const idx = arr.findIndex((o) => o.id === opcionId);
+          if (idx >= 0) arr.splice(idx, 1);
+          else arr.push(opcion);
+        }
+        render();
+      });
+    });
+    document.getElementById('modal-agregar').addEventListener('click', () => {
+      const opcionesElegidas = [];
+      grupos.forEach((g) => {
+        if (g.tipo === 'variante' && seleccion[g.id]) {
+          opcionesElegidas.push({ grupo: g.nombre, nombre: seleccion[g.id].nombre, precio: Number(seleccion[g.id].precio), tipo: 'variante' });
+        }
+        if (g.tipo === 'extra') {
+          seleccion[g.id].forEach((op) => {
+            opcionesElegidas.push({ grupo: g.nombre, nombre: op.nombre, precio: Number(op.precio), tipo: 'extra' });
+          });
+        }
+      });
+      agregarItemAlCarrito({
+        producto_id: producto.id,
+        nombre: producto.nombre,
+        precio: calcularPrecio(),
+        cantidad,
+        opciones_seleccionadas: opcionesElegidas,
+      });
+      cerrar();
+    });
+  }
+
+  function cerrar() {
+    document.getElementById('modal-container').innerHTML = '';
+  }
+
+  render();
 }
 
 document.querySelectorAll('.tipo-pedido button').forEach((btn) => {
@@ -139,6 +275,7 @@ async function enviarPedido() {
     producto_id: it.producto_id,
     cantidad: it.cantidad,
     precio_unitario: it.precio,
+    opciones_seleccionadas: it.opciones_seleccionadas,
   }));
 
   const btn = document.getElementById('btn-enviar');
