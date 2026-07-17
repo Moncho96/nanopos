@@ -5,7 +5,10 @@ const path = require('path');
 const { Pool } = require('pg');
 
 async function main() {
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+  const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
   const schema = fs.readFileSync(path.join(__dirname, '../db/schema.sql'), 'utf8');
   const seed = fs.readFileSync(path.join(__dirname, '../db/seed.sql'), 'utf8');
 
