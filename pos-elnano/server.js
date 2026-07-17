@@ -108,11 +108,20 @@ app.post('/api/pedidos', async (req, res) => {
       itemRows.push(itemRes.rows[0]);
     }
 
+    // Trae el nombre del producto para cada item, para que el KDS lo muestre
+    // en tiempo real sin tener que recargar la página
+    const ids = itemRows.map((r) => r.id);
+    const { rows: itemsConNombre } = await client.query(
+      `SELECT pi.*, pr.nombre AS producto_nombre, pr.estacion
+       FROM pedido_items pi
+       JOIN productos pr ON pr.id = pi.producto_id
+       WHERE pi.id = ANY($1)`,
+      [ids]
+    );
+
     await client.query('COMMIT');
 
-    const pedidoCompleto = { ...pedido, items: itemRows };
-    // Avisa en tiempo real al monitor de cocina de esa sucursal
-    io.to(`sucursal_${sucursal_id}`).emit('nuevo_pedido', pedidoCompleto);
+    const pedidoCompleto = { ...pedido, items: itemsConNombre };
 
     res.json(pedidoCompleto);
   } catch (err) {
