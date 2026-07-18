@@ -77,6 +77,23 @@
   .metodo-btn:active { background: #f4f4f4; }
   .btn-cancelar-modal { width: 100%; padding: 10px; margin-top: 8px; background: none; border: none; color: #888; cursor: pointer; }
   #sin-pedidos { text-align: center; padding: 40px; color: #999; }
+
+  .form-inline { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px; background: white; margin: 0 12px 12px; border-radius: 10px; }
+  .form-inline input, .form-inline select { padding: 8px; border-radius: 6px; border: 1px solid #ddd; font-size: 14px; }
+  .form-inline input[type="text"] { flex: 1; min-width: 120px; }
+  .form-inline button { background: #1a7d3a; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; }
+
+  .tabla-simple { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; margin: 0 12px 12px; width: calc(100% - 24px); }
+  .tabla-simple th, .tabla-simple td { padding: 10px 12px; text-align: left; font-size: 14px; border-bottom: 1px solid #eee; }
+  .tabla-simple th { background: #f4f4f4; font-size: 12px; text-transform: uppercase; color: #888; }
+  .tabla-simple .num { text-align: right; }
+  .tabla-simple .btn-eliminar-fila { background: none; border: none; color: #b8232f; cursor: pointer; font-size: 16px; }
+
+  .resumen-total { display: flex; justify-content: space-between; padding: 14px 16px; margin: 0 12px 16px; background: white; border-radius: 10px; font-size: 16px; font-weight: bold; }
+
+  .editar-item-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+  .editar-item-row button { background: none; border: none; color: #b8232f; font-size: 18px; cursor: pointer; }
+  .btn-agregar-producto { width: 100%; padding: 10px; margin-top: 10px; border: 1px dashed #ccc; background: none; border-radius: 8px; color: #555; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -88,6 +105,8 @@
 <div class="nav-vistas">
   <button id="nav-pedido" class="active">📝 Tomar pedido</button>
   <button id="nav-cobro">💵 Cobrar</button>
+  <button id="nav-corte">📊 Corte</button>
+  <button id="nav-envios">🚚 Envíos</button>
 </div>
 
 <div id="vista-pedido">
@@ -99,10 +118,11 @@
 
   <div class="cart">
     <div class="cliente-box">
-      <input type="tel" id="cliente-telefono" placeholder="Teléfono del cliente (opcional)" />
-      <input type="text" id="cliente-nombre" placeholder="Nombre" />
+      <input type="text" id="cliente-nombre" placeholder="Nombre del cliente * (obligatorio)" required />
+      <input type="tel" id="cliente-telefono" placeholder="Teléfono (opcional)" />
       <input type="text" id="cliente-direccion" placeholder="Dirección (para domicilio)" />
-      <input type="text" id="cliente-colonia" placeholder="Colonia" />
+      <input type="text" id="cliente-colonia" placeholder="Colonia (para domicilio)" />
+      <div id="envio-info" style="font-size:13px;color:#1a7d3a;font-weight:600;display:none"></div>
     </div>
 
     <div class="tipo-pedido">
@@ -127,6 +147,47 @@
   </div>
   <div class="lista-cobro" id="lista-cobro"></div>
   <div id="sin-pedidos" style="display:none">No hay pedidos aquí</div>
+</div>
+
+<div id="vista-corte" style="display:none">
+  <div class="form-inline">
+    <input type="date" id="corte-fecha" />
+    <button id="btn-cargar-corte">Ver corte</button>
+  </div>
+  <table class="tabla-simple">
+    <thead><tr><th>Método</th><th class="num">Ventas</th><th class="num">Gastos</th><th class="num">Debe haber</th></tr></thead>
+    <tbody id="corte-tabla-body"></tbody>
+  </table>
+  <div class="resumen-total"><span id="corte-pedidos-cobrados"></span></div>
+  <div class="resumen-total"><span>Total neto</span><span id="corte-total-neto">$0.00</span></div>
+
+  <h3 style="padding:0 12px">Registrar gasto</h3>
+  <div class="form-inline">
+    <input type="text" id="gasto-descripcion" placeholder="Descripción (ej. Compra de carbón)" />
+    <input type="text" inputmode="decimal" id="gasto-monto" placeholder="Monto" style="width:100px" />
+    <select id="gasto-metodo">
+      <option value="efectivo">Efectivo</option>
+      <option value="tarjeta">Tarjeta</option>
+      <option value="transferencia">Transferencia</option>
+    </select>
+    <button id="btn-agregar-gasto">Agregar gasto</button>
+  </div>
+  <table class="tabla-simple">
+    <thead><tr><th>Descripción</th><th>Método</th><th class="num">Monto</th><th></th></tr></thead>
+    <tbody id="gastos-tabla-body"></tbody>
+  </table>
+</div>
+
+<div id="vista-envios" style="display:none">
+  <div class="form-inline">
+    <input type="text" id="envio-colonia" placeholder="Colonia" />
+    <input type="text" inputmode="decimal" id="envio-costo" placeholder="Costo" style="width:100px" />
+    <button id="btn-agregar-envio">Agregar / actualizar</button>
+  </div>
+  <table class="tabla-simple">
+    <thead><tr><th>Colonia</th><th class="num">Costo de envío</th><th></th></tr></thead>
+    <tbody id="envios-tabla-body"></tbody>
+  </table>
 </div>
 
 <div id="modal-container"></div>

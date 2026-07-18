@@ -5,6 +5,8 @@ const state = {
   categoriaActiva: null,
   carrito: [], // { producto_id, nombre, precio, cantidad }
   tipoPedido: 'mesa',
+  envios: [],
+  costoEnvio: 0,
 };
 
 async function cargarInicial() {
@@ -20,6 +22,8 @@ async function cargarInicial() {
   state.categoriaActiva = state.categorias[0]?.id ?? null;
   renderTabs();
   renderProductos();
+
+  state.envios = await fetch(`/api/envios?sucursal_id=${select.value}`).then((r) => r.json());
 }
 
 function renderTabs() {
@@ -116,12 +120,47 @@ function renderCarrito() {
     btn.addEventListener('click', () => quitarDelCarrito(btn.dataset.clave));
   });
 
-  const total = state.carrito.reduce((sum, it) => sum + it.precio * it.cantidad, 0);
+  const totalProductos = state.carrito.reduce((sum, it) => sum + it.precio * it.cantidad, 0);
+  const total = totalProductos + (state.costoEnvio || 0);
   document.getElementById('total').textContent = total.toFixed(2);
 }
 
+function actualizarCostoEnvio() {
+  const infoEl = document.getElementById('envio-info');
+  if (state.tipoPedido !== 'domicilio') {
+    state.costoEnvio = 0;
+    infoEl.style.display = 'none';
+    renderCarrito();
+    return;
+  }
+  const coloniaEscrita = document.getElementById('cliente-colonia').value.trim();
+  const match = (state.envios || []).find((e) => e.colonia.toLowerCase() === coloniaEscrita.toLowerCase());
+  if (match) {
+    state.costoEnvio = Number(match.costo);
+    infoEl.textContent = `🚚 Envío a ${match.colonia}: $${state.costoEnvio.toFixed(2)}`;
+    infoEl.style.display = 'block';
+  } else {
+    state.costoEnvio = 0;
+    if (coloniaEscrita) {
+      infoEl.textContent = `⚠️ Sin costo de envío registrado para "${coloniaEscrita}" — agrégalo en la pestaña Envíos`;
+      infoEl.style.display = 'block';
+    } else {
+      infoEl.style.display = 'none';
+    }
+  }
+  renderCarrito();
+}
+
+document.getElementById('cliente-colonia').addEventListener('input', actualizarCostoEnvio);
+
 // ---------- Modal de modificadores ----------
-function abrirModalModificadores(producto, grupos) {
+function abrirModalModificadores(producto, grupos, onAgregar) {
+  onAgregar =
+    onAgregar ||
+    function (item) {
+      agregarItemAlCarrito(item);
+      document.getElementById('modal-container').innerHTML = '';
+    };
   const seleccion = {}; // grupo.id -> opcion (variante) u opcion.id[] (extra)
   grupos.forEach((g) => {
     seleccion[g.id] = g.tipo === 'extra' ? [] : (g.obligatorio ? g.opciones[0] : null);
@@ -222,14 +261,13 @@ function abrirModalModificadores(producto, grupos) {
           });
         }
       });
-      agregarItemAlCarrito({
+      onAgregar({
         producto_id: producto.id,
         nombre: producto.nombre,
         precio: calcularPrecio(),
         cantidad,
         opciones_seleccionadas: opcionesElegidas,
       });
-      cerrar();
     });
   }
 
@@ -245,11 +283,17 @@ document.querySelectorAll('.tipo-pedido button').forEach((btn) => {
     state.tipoPedido = btn.dataset.tipo;
     document.querySelectorAll('.tipo-pedido button').forEach((b) => b.classList.remove('active'));
     btn.classList.add('active');
+    actualizarCostoEnvio();
   });
 });
 
 async function enviarPedido() {
   const statusMsg = document.getElementById('status-msg');
+  const nombre = document.getElementById('cliente-nombre').value.trim();
+  if (!nombre) {
+    statusMsg.textContent = '⚠️ El nombre del cliente es obligatorio.';
+    return;
+  }
   if (!state.carrito.length) {
     statusMsg.textContent = 'Agrega al menos un producto.';
     return;
@@ -257,7 +301,6 @@ async function enviarPedido() {
 
   const sucursal_id = Number(document.getElementById('sucursal-select').value);
   const telefono = document.getElementById('cliente-telefono').value.trim();
-  const nombre = document.getElementById('cliente-nombre').value.trim();
   const direccion = document.getElementById('cliente-direccion').value.trim();
   const colonia = document.getElementById('cliente-colonia').value.trim();
 
@@ -283,24 +326,39 @@ async function enviarPedido() {
   statusMsg.textContent = 'Enviando...';
 
   try {
-    await fetch('/api/pedidos', {
+    const resp = await fetch('/api/pedidos', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sucursal_id, cliente_id, tipo: state.tipoPedido, items }),
-    }).then((r) => r.json());
+      body: JSON.stringify({
+        sucursal_id,
+        cliente_id,
+        cliente_nombre: nombre,
+        tipo: state.tipoPedido,
+        items,
+        costo_envio: state.costoEnvio || 0,
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      statusMsg.textContent = '❌ ' + (err.error || 'No se pudo enviar el pedido');
+      btn.disabled = false;
+      return;
+    }
 
     statusMsg.textContent = '✅ Pedido enviado a cocina';
     state.carrito = [];
+    state.costoEnvio = 0;
     renderCarrito();
     document.getElementById('cliente-telefono').value = '';
     document.getElementById('cliente-nombre').value = '';
     document.getElementById('cliente-direccion').value = '';
     document.getElementById('cliente-colonia').value = '';
+    document.getElementById('envio-info').style.display = 'none';
   } catch (err) {
     statusMsg.textContent = '❌ Error al enviar el pedido, intenta de nuevo';
   } finally {
     btn.disabled = false;
-    setTimeout(() => (statusMsg.textContent = ''), 3000);
+    setTimeout(() => (statusMsg.textContent = ''), 4000);
   }
 }
 
@@ -317,18 +375,29 @@ let filtroCobro = 'pendientes';
 
 document.getElementById('nav-pedido').addEventListener('click', () => cambiarVista('pedido'));
 document.getElementById('nav-cobro').addEventListener('click', () => cambiarVista('cobro'));
+document.getElementById('nav-corte').addEventListener('click', () => cambiarVista('corte'));
+document.getElementById('nav-envios').addEventListener('click', () => cambiarVista('envios'));
 
 function cambiarVista(vista) {
   document.getElementById('vista-pedido').style.display = vista === 'pedido' ? 'block' : 'none';
   document.getElementById('vista-cobro').style.display = vista === 'cobro' ? 'block' : 'none';
+  document.getElementById('vista-corte').style.display = vista === 'corte' ? 'block' : 'none';
+  document.getElementById('vista-envios').style.display = vista === 'envios' ? 'block' : 'none';
   document.getElementById('nav-pedido').classList.toggle('active', vista === 'pedido');
   document.getElementById('nav-cobro').classList.toggle('active', vista === 'cobro');
+  document.getElementById('nav-corte').classList.toggle('active', vista === 'corte');
+  document.getElementById('nav-envios').classList.toggle('active', vista === 'envios');
   if (vista === 'cobro') cargarPedidosCobro();
+  if (vista === 'corte') cargarCorte();
+  if (vista === 'envios') cargarEnvios();
 }
 
-// Si cambian de sucursal mientras están en la vista de cobro, refresca esa lista también
-document.getElementById('sucursal-select').addEventListener('change', () => {
+// Si cambian de sucursal, refresca la vista activa y la lista de envíos usada en "Tomar pedido"
+document.getElementById('sucursal-select').addEventListener('change', async () => {
+  state.envios = await fetch(`/api/envios?sucursal_id=${document.getElementById('sucursal-select').value}`).then((r) => r.json());
   if (document.getElementById('vista-cobro').style.display !== 'none') cargarPedidosCobro();
+  if (document.getElementById('vista-corte').style.display !== 'none') cargarCorte();
+  if (document.getElementById('vista-envios').style.display !== 'none') cargarEnvios();
 });
 
 document.querySelectorAll('.filtro').forEach((btn) => {
@@ -365,6 +434,9 @@ function renderCobro() {
   document.querySelectorAll('[data-cobrar]').forEach((btn) => {
     btn.addEventListener('click', () => abrirModalCobro(Number(btn.dataset.cobrar)));
   });
+  document.querySelectorAll('[data-editar]').forEach((btn) => {
+    btn.addEventListener('click', () => abrirModalEditarPedido(Number(btn.dataset.editar)));
+  });
 }
 
 function renderCardCobro(pedido) {
@@ -391,7 +463,10 @@ function renderCardCobro(pedido) {
         ${
           pedido.pagado
             ? `<span class="pago-info">✅ ${METODO_LABELS[pedido.metodo_pago] || pedido.metodo_pago}</span>`
-            : `<button class="btn-cobrar" data-cobrar="${pedido.id}">Cobrar</button>`
+            : `<div style="display:flex;gap:6px">
+                <button class="btn-cobrar" style="background:#555" data-editar="${pedido.id}">✏️ Editar</button>
+                <button class="btn-cobrar" data-cobrar="${pedido.id}">Cobrar</button>
+              </div>`
         }
       </div>
     </div>`;
@@ -574,4 +649,273 @@ async function confirmarCobro(filasCalculadas) {
     btn.disabled = false;
     btn.textContent = 'Confirmar cobro';
   }
+}
+
+// ==================== EDITAR PEDIDO ====================
+
+let pedidoEditando = null;
+let categoriaEditActiva = null;
+let mostrarSelectorEdicion = false;
+
+async function abrirModalEditarPedido(pedidoId) {
+  pedidoEditando = await fetch(`/api/pedidos/${pedidoId}`).then((r) => r.json());
+  categoriaEditActiva = state.categorias[0]?.id ?? null;
+  mostrarSelectorEdicion = false;
+  renderModalEditar();
+}
+
+async function refrescarPedidoEditando() {
+  pedidoEditando = await fetch(`/api/pedidos/${pedidoEditando.id}`).then((r) => r.json());
+}
+
+function renderModalEditar() {
+  const itemsHtml =
+    pedidoEditando.items
+      .map((it) => {
+        const opciones = (it.opciones_seleccionadas || []).map((o) => o.nombre).join(', ');
+        return `
+      <div class="editar-item-row">
+        <span>${it.cantidad}x ${it.producto_nombre}${opciones ? `<br><small style="color:#888">${opciones}</small>` : ''}</span>
+        <span>
+          $${(it.cantidad * it.precio_unitario).toFixed(2)}
+          <button data-item-id="${it.id}" class="btn-quitar-item-edit">×</button>
+        </span>
+      </div>`;
+      })
+      .join('') || '<p style="color:#999;font-size:14px">Sin productos</p>';
+
+  const selectorHtml = mostrarSelectorEdicion
+    ? `<div class="tabs" id="tabs-edit" style="margin-top:12px"></div>
+       <div class="productos" id="productos-edit" style="margin-top:8px"></div>`
+    : '';
+
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-editar">
+      <div class="modal-box">
+        <h3>Editar pedido #${pedidoEditando.id}</h3>
+        <div style="font-size:13px;color:#888;margin-bottom:10px">${pedidoEditando.cliente_nombre || ''}</div>
+        ${itemsHtml}
+        <div class="total" style="margin-top:8px">Total: $${Number(pedidoEditando.total).toFixed(2)}</div>
+        <button class="btn-agregar-producto" id="btn-mostrar-selector">${mostrarSelectorEdicion ? '− Ocultar menú' : '+ Agregar producto'}</button>
+        ${selectorHtml}
+        <div class="modal-botones" style="margin-top:14px">
+          <button class="btn-cancelar" id="btn-cerrar-editar" style="width:100%">Listo</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  document.getElementById('modal-overlay-editar').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-editar') cerrarModalEditar();
+  });
+  document.getElementById('btn-cerrar-editar').addEventListener('click', cerrarModalEditar);
+  document.querySelectorAll('.btn-quitar-item-edit').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/pedido_items/${btn.dataset.itemId}`, { method: 'DELETE' });
+      await refrescarPedidoEditando();
+      renderModalEditar();
+    });
+  });
+  document.getElementById('btn-mostrar-selector').addEventListener('click', () => {
+    mostrarSelectorEdicion = !mostrarSelectorEdicion;
+    renderModalEditar();
+  });
+
+  if (mostrarSelectorEdicion) {
+    renderTabsEdit();
+    renderProductosEdit();
+  }
+}
+
+function renderTabsEdit() {
+  const tabs = document.getElementById('tabs-edit');
+  tabs.innerHTML = state.categorias
+    .map((c) => `<div class="tab ${c.id === categoriaEditActiva ? 'active' : ''}" data-id="${c.id}">${c.nombre}</div>`)
+    .join('');
+  tabs.querySelectorAll('.tab').forEach((el) => {
+    el.addEventListener('click', () => {
+      categoriaEditActiva = Number(el.dataset.id);
+      renderTabsEdit();
+      renderProductosEdit();
+    });
+  });
+}
+
+function renderProductosEdit() {
+  const cont = document.getElementById('productos-edit');
+  const lista = state.productos.filter((p) => p.categoria_id === categoriaEditActiva);
+  cont.innerHTML = lista
+    .map(
+      (p) => `
+      <div class="producto" data-id="${p.id}">
+        <div class="nombre">${p.nombre}</div>
+        <div class="precio">$${Number(p.precio).toFixed(2)}</div>
+      </div>`
+    )
+    .join('');
+  cont.querySelectorAll('.producto').forEach((el) => {
+    el.addEventListener('click', () => {
+      const producto = state.productos.find((p) => p.id === Number(el.dataset.id));
+      const grupos = producto.grupos_modificadores || [];
+
+      const onAgregar = async (item) => {
+        await fetch(`/api/pedidos/${pedidoEditando.id}/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            producto_id: item.producto_id,
+            cantidad: item.cantidad,
+            precio_unitario: item.precio,
+            opciones_seleccionadas: item.opciones_seleccionadas,
+          }),
+        });
+        await refrescarPedidoEditando();
+        mostrarSelectorEdicion = true;
+        renderModalEditar();
+      };
+
+      if (grupos.length === 0) {
+        onAgregar({
+          producto_id: producto.id,
+          cantidad: 1,
+          precio: Number(producto.precio),
+          opciones_seleccionadas: [],
+        });
+      } else {
+        abrirModalModificadores(producto, grupos, onAgregar);
+      }
+    });
+  });
+}
+
+function cerrarModalEditar() {
+  document.getElementById('modal-container').innerHTML = '';
+  pedidoEditando = null;
+  cargarPedidosCobro();
+}
+
+// ==================== CORTE DE CAJA ====================
+
+const METODOS_LABEL = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia' };
+
+document.getElementById('corte-fecha').value = new Date().toISOString().slice(0, 10);
+document.getElementById('btn-cargar-corte').addEventListener('click', cargarCorte);
+document.getElementById('btn-agregar-gasto').addEventListener('click', agregarGasto);
+document.getElementById('gasto-monto').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+});
+
+async function cargarCorte() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  const fecha = document.getElementById('corte-fecha').value;
+  if (!fecha) return;
+
+  const corte = await fetch(`/api/corte?sucursal_id=${sucursalId}&fecha=${fecha}`).then((r) => r.json());
+
+  document.getElementById('corte-tabla-body').innerHTML = corte.resumen
+    .map(
+      (r) => `
+      <tr>
+        <td>${METODOS_LABEL[r.metodo]}</td>
+        <td class="num">$${r.ventas.toFixed(2)}</td>
+        <td class="num">$${r.gastos.toFixed(2)}</td>
+        <td class="num"><strong>$${r.neto.toFixed(2)}</strong></td>
+      </tr>`
+    )
+    .join('');
+
+  document.getElementById('corte-pedidos-cobrados').textContent = `Pedidos cobrados: ${corte.pedidosCobrados}`;
+  document.getElementById('corte-total-neto').textContent = `$${corte.totalNeto.toFixed(2)}`;
+
+  const gastos = await fetch(`/api/gastos?sucursal_id=${sucursalId}&fecha=${fecha}`).then((r) => r.json());
+  document.getElementById('gastos-tabla-body').innerHTML =
+    gastos
+      .map(
+        (g) => `
+      <tr>
+        <td>${g.descripcion}</td>
+        <td>${METODOS_LABEL[g.metodo_pago]}</td>
+        <td class="num">$${Number(g.monto).toFixed(2)}</td>
+        <td><button class="btn-eliminar-fila" data-id="${g.id}">🗑️</button></td>
+      </tr>`
+      )
+      .join('') || '<tr><td colspan="4" style="text-align:center;color:#999">Sin gastos ese día</td></tr>';
+
+  document.querySelectorAll('#gastos-tabla-body .btn-eliminar-fila').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/gastos/${btn.dataset.id}`, { method: 'DELETE' });
+      cargarCorte();
+    });
+  });
+}
+
+async function agregarGasto() {
+  const sucursal_id = document.getElementById('sucursal-select').value;
+  const descripcion = document.getElementById('gasto-descripcion').value.trim();
+  const monto = document.getElementById('gasto-monto').value;
+  const metodo_pago = document.getElementById('gasto-metodo').value;
+  if (!descripcion || !monto) {
+    alert('Falta la descripción o el monto del gasto');
+    return;
+  }
+  await fetch('/api/gastos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursal_id, descripcion, monto, metodo_pago }),
+  });
+  document.getElementById('gasto-descripcion').value = '';
+  document.getElementById('gasto-monto').value = '';
+  cargarCorte();
+}
+
+// ==================== ENVÍOS POR COLONIA ====================
+
+document.getElementById('btn-agregar-envio').addEventListener('click', agregarEnvio);
+document.getElementById('envio-costo').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+});
+
+async function cargarEnvios() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  state.envios = await fetch(`/api/envios?sucursal_id=${sucursalId}`).then((r) => r.json());
+  renderEnvios();
+}
+
+function renderEnvios() {
+  document.getElementById('envios-tabla-body').innerHTML =
+    state.envios
+      .map(
+        (e) => `
+      <tr>
+        <td>${e.colonia}</td>
+        <td class="num">$${Number(e.costo).toFixed(2)}</td>
+        <td><button class="btn-eliminar-fila" data-id="${e.id}">🗑️</button></td>
+      </tr>`
+      )
+      .join('') || '<tr><td colspan="3" style="text-align:center;color:#999">Sin colonias registradas</td></tr>';
+
+  document.querySelectorAll('#envios-tabla-body .btn-eliminar-fila').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/envios/${btn.dataset.id}`, { method: 'DELETE' });
+      cargarEnvios();
+    });
+  });
+}
+
+async function agregarEnvio() {
+  const sucursal_id = document.getElementById('sucursal-select').value;
+  const colonia = document.getElementById('envio-colonia').value.trim();
+  const costo = document.getElementById('envio-costo').value;
+  if (!colonia || !costo) {
+    alert('Falta la colonia o el costo');
+    return;
+  }
+  await fetch('/api/envios', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursal_id, colonia, costo }),
+  });
+  document.getElementById('envio-colonia').value = '';
+  document.getElementById('envio-costo').value = '';
+  cargarEnvios();
 }
