@@ -57,7 +57,8 @@ async function obtenerPedidoCompleto(pedidoId) {
 
 async function recalcularTotalPedido(pedidoId) {
   const { rows: sumaRows } = await pool.query(
-    `SELECT COALESCE(SUM(cantidad * precio_unitario), 0) AS suma FROM pedido_items WHERE pedido_id = $1`,
+    `SELECT COALESCE(SUM(cantidad * precio_unitario), 0) AS suma
+     FROM pedido_items WHERE pedido_id = $1 AND cancelado = false`,
     [pedidoId]
   );
   const { rows: pedRows } = await pool.query('SELECT costo_envio FROM pedidos WHERE id = $1', [pedidoId]);
@@ -309,22 +310,23 @@ app.post('/api/pedidos/:id/items', async (req, res) => {
   }
 });
 
-// Quita un producto de un pedido existente
-app.delete('/api/pedido_items/:id', async (req, res) => {
+// Cancela un producto de un pedido existente (no se borra, se marca para que
+// la cocina lo vea tachado en rojo por si ya lo estaba preparando)
+app.patch('/api/pedido_items/:id/cancelar', async (req, res) => {
   const { id } = req.params;
   try {
     const { rows } = await pool.query('SELECT pedido_id FROM pedido_items WHERE id = $1', [id]);
     if (!rows.length) return res.status(404).json({ error: 'Producto no encontrado en el pedido' });
     const pedidoId = rows[0].pedido_id;
 
-    await pool.query('DELETE FROM pedido_items WHERE id = $1', [id]);
+    await pool.query('UPDATE pedido_items SET cancelado = true WHERE id = $1', [id]);
     await recalcularTotalPedido(pedidoId);
     const pedidoCompleto = await obtenerPedidoCompleto(pedidoId);
     io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
     res.json(pedidoCompleto);
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'No se pudo quitar el producto' });
+    res.status(500).json({ error: 'No se pudo cancelar el producto' });
   }
 });
 
@@ -432,19 +434,17 @@ app.delete('/api/gastos/:id', async (req, res) => {
 });
 
 // ---------- Corte de caja ----------
-app.get('/api/corte', async (req, res) => {
-  const { sucursal_id, fecha } = req.query;
-  if (!sucursal_id || !fecha) {
-    return res.status(400).json({ error: 'Falta sucursal_id o fecha' });
-  }
-
+async function calcularCorte(sucursalId, fecha) {
+  // Resta, proporcionalmente, el costo de envío de cada pago — ese dinero es
+  // para el repartidor, no es venta real del negocio.
   const { rows: ventas } = await pool.query(
-    `SELECT pg.metodo, SUM(pg.monto) AS total
+    `SELECT pg.metodo,
+            SUM(pg.monto * (1 - COALESCE(p.costo_envio, 0) / NULLIF(p.total, 0))) AS total
      FROM pagos pg
      JOIN pedidos p ON p.id = pg.pedido_id
      WHERE p.sucursal_id = $1 AND pg.creado_en::date = $2
      GROUP BY pg.metodo`,
-    [sucursal_id, fecha]
+    [sucursalId, fecha]
   );
 
   const { rows: gastos } = await pool.query(
@@ -452,34 +452,97 @@ app.get('/api/corte', async (req, res) => {
      FROM gastos
      WHERE sucursal_id = $1 AND creado_en::date = $2
      GROUP BY metodo_pago`,
-    [sucursal_id, fecha]
+    [sucursalId, fecha]
   );
 
   const { rows: pedidosCount } = await pool.query(
-    `SELECT COUNT(*) AS cantidad FROM pedidos WHERE sucursal_id = $1 AND creado_en::date = $2 AND pagado = true`,
-    [sucursal_id, fecha]
+    `SELECT COUNT(*) AS cantidad, COALESCE(SUM(costo_envio), 0) AS total_envios
+     FROM pedidos WHERE sucursal_id = $1 AND pagado_en::date = $2 AND pagado = true`,
+    [sucursalId, fecha]
   );
 
   const metodos = ['efectivo', 'tarjeta', 'transferencia'];
   const resumen = metodos.map((m) => {
     const venta = Number(ventas.find((v) => v.metodo === m)?.total || 0);
     const gasto = Number(gastos.find((g) => g.metodo === m)?.total || 0);
-    return { metodo: m, ventas: venta, gastos: gasto, neto: Number((venta - gasto).toFixed(2)) };
+    return { metodo: m, ventas: Number(venta.toFixed(2)), gastos: gasto, neto: Number((venta - gasto).toFixed(2)) };
   });
 
-  const totalVentas = resumen.reduce((s, r) => s + r.ventas, 0);
+  const totalVentas = Number(resumen.reduce((s, r) => s + r.ventas, 0).toFixed(2));
   const totalGastos = resumen.reduce((s, r) => s + r.gastos, 0);
-  const totalNeto = resumen.reduce((s, r) => s + r.neto, 0);
+  const totalNeto = Number(resumen.reduce((s, r) => s + r.neto, 0).toFixed(2));
+  const totalEnvios = Number(pedidosCount[0].total_envios);
 
-  res.json({
+  return {
     fecha,
-    sucursal_id: Number(sucursal_id),
+    sucursal_id: Number(sucursalId),
     pedidosCobrados: Number(pedidosCount[0].cantidad),
     resumen,
     totalVentas,
     totalGastos,
     totalNeto,
+    totalEnvios,
+  };
+}
+
+app.get('/api/corte', async (req, res) => {
+  const { sucursal_id, fecha } = req.query;
+  if (!sucursal_id || !fecha) {
+    return res.status(400).json({ error: 'Falta sucursal_id o fecha' });
+  }
+  res.json(await calcularCorte(sucursal_id, fecha));
+});
+
+app.get('/api/corte/cerrado', async (req, res) => {
+  const { sucursal_id, fecha } = req.query;
+  const { rows } = await pool.query(
+    'SELECT * FROM cortes WHERE sucursal_id = $1 AND fecha = $2',
+    [sucursal_id, fecha]
+  );
+  res.json(rows[0] || null);
+});
+
+app.post('/api/corte/cerrar', async (req, res) => {
+  const { sucursal_id, fecha, contado } = req.body; // contado: { efectivo, tarjeta, transferencia }
+  if (!sucursal_id || !fecha || !contado) {
+    return res.status(400).json({ error: 'Faltan datos para cerrar el corte' });
+  }
+
+  const corte = await calcularCorte(sucursal_id, fecha);
+  const resumenConContado = corte.resumen.map((r) => {
+    const contadoMetodo = Number(contado[r.metodo]) || 0;
+    return { ...r, contado: contadoMetodo, diferencia: Number((contadoMetodo - r.neto).toFixed(2)) };
   });
+  const totalContado = resumenConContado.reduce((s, r) => s + r.contado, 0);
+  const diferencia = Number((totalContado - corte.totalNeto).toFixed(2));
+
+  const { rows } = await pool.query(
+    `INSERT INTO cortes (sucursal_id, fecha, resumen, total_ventas, total_gastos, total_envios, total_neto_esperado, total_contado, diferencia)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (sucursal_id, fecha) DO UPDATE SET
+       resumen = EXCLUDED.resumen,
+       total_ventas = EXCLUDED.total_ventas,
+       total_gastos = EXCLUDED.total_gastos,
+       total_envios = EXCLUDED.total_envios,
+       total_neto_esperado = EXCLUDED.total_neto_esperado,
+       total_contado = EXCLUDED.total_contado,
+       diferencia = EXCLUDED.diferencia,
+       cerrado_en = now()
+     RETURNING *`,
+    [
+      sucursal_id,
+      fecha,
+      JSON.stringify(resumenConContado),
+      corte.totalVentas,
+      corte.totalGastos,
+      corte.totalEnvios,
+      corte.totalNeto,
+      totalContado,
+      diferencia,
+    ]
+  );
+
+  res.json(rows[0]);
 });
 
 // ---------- Costos de envío por colonia ----------
