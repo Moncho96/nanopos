@@ -121,7 +121,9 @@
       <input type="text" id="cliente-nombre" placeholder="Nombre del cliente * (obligatorio)" required />
       <input type="tel" id="cliente-telefono" placeholder="Teléfono (opcional)" />
       <input type="text" id="cliente-direccion" placeholder="Dirección (para domicilio)" />
-      <input type="text" id="cliente-colonia" placeholder="Colonia (para domicilio)" />
+      <select id="cliente-colonia">
+        <option value="">Colonia (para domicilio)</option>
+      </select>
       <div id="envio-info" style="font-size:13px;color:#1a7d3a;font-weight:600;display:none"></div>
     </div>
 
@@ -154,11 +156,15 @@
     <input type="date" id="corte-fecha" />
     <button id="btn-cargar-corte">Ver corte</button>
   </div>
+
+  <div id="corte-cerrado-banner" style="display:none;margin:0 12px 12px;padding:12px;background:#d4edda;color:#1a7d3a;border-radius:10px;font-weight:600"></div>
+
   <table class="tabla-simple">
     <thead><tr><th>Método</th><th class="num">Ventas</th><th class="num">Gastos</th><th class="num">Debe haber</th></tr></thead>
     <tbody id="corte-tabla-body"></tbody>
   </table>
   <div class="resumen-total"><span id="corte-pedidos-cobrados"></span></div>
+  <div class="resumen-total" style="color:#888;font-weight:normal"><span>Envíos (para repartidores, no cuenta aquí)</span><span id="corte-total-envios">$0.00</span></div>
   <div class="resumen-total"><span>Total neto</span><span id="corte-total-neto">$0.00</span></div>
 
   <h3 style="padding:0 12px">Registrar gasto</h3>
@@ -176,6 +182,9 @@
     <thead><tr><th>Descripción</th><th>Método</th><th class="num">Monto</th><th></th></tr></thead>
     <tbody id="gastos-tabla-body"></tbody>
   </table>
+
+  <h3 style="padding:0 12px">Cuadre de caja</h3>
+  <div id="cuadre-caja"></div>
 </div>
 
 <div id="vista-envios" style="display:none">

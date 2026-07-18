@@ -24,6 +24,22 @@ async function cargarInicial() {
   renderProductos();
 
   state.envios = await fetch(`/api/envios?sucursal_id=${select.value}`).then((r) => r.json());
+  renderColoniaOptions();
+}
+
+function renderColoniaOptions() {
+  const sel = document.getElementById('cliente-colonia');
+  const valorActual = sel.value;
+  if (!state.envios.length) {
+    sel.innerHTML = '<option value="">Sin colonias registradas — agrégalas en "Envíos"</option>';
+    return;
+  }
+  sel.innerHTML =
+    '<option value="">Colonia (para domicilio)</option>' +
+    state.envios
+      .map((e) => `<option value="${e.colonia}">${e.colonia} — $${Number(e.costo).toFixed(2)}</option>`)
+      .join('');
+  sel.value = valorActual;
 }
 
 function renderTabs() {
@@ -151,7 +167,7 @@ function actualizarCostoEnvio() {
   renderCarrito();
 }
 
-document.getElementById('cliente-colonia').addEventListener('input', actualizarCostoEnvio);
+document.getElementById('cliente-colonia').addEventListener('change', actualizarCostoEnvio);
 
 // ---------- Modal de modificadores ----------
 function abrirModalModificadores(producto, grupos, onAgregar) {
@@ -395,6 +411,7 @@ function cambiarVista(vista) {
 // Si cambian de sucursal, refresca la vista activa y la lista de envíos usada en "Tomar pedido"
 document.getElementById('sucursal-select').addEventListener('change', async () => {
   state.envios = await fetch(`/api/envios?sucursal_id=${document.getElementById('sucursal-select').value}`).then((r) => r.json());
+  renderColoniaOptions();
   if (document.getElementById('vista-cobro').style.display !== 'none') cargarPedidosCobro();
   if (document.getElementById('vista-corte').style.display !== 'none') cargarCorte();
   if (document.getElementById('vista-envios').style.display !== 'none') cargarEnvios();
@@ -442,6 +459,7 @@ function renderCobro() {
 function renderCardCobro(pedido) {
   const hora = new Date(pedido.creado_en).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
   const itemsTexto = pedido.items
+    .filter((it) => !it.cancelado)
     .map((it) => {
       const opciones = (it.opciones_seleccionadas || []).map((o) => o.nombre).join(', ');
       return `${it.cantidad}x ${it.producto_nombre}${opciones ? ` (${opciones})` : ''}`;
@@ -669,8 +687,9 @@ async function refrescarPedidoEditando() {
 }
 
 function renderModalEditar() {
+  const itemsActivos = pedidoEditando.items.filter((it) => !it.cancelado);
   const itemsHtml =
-    pedidoEditando.items
+    itemsActivos
       .map((it) => {
         const opciones = (it.opciones_seleccionadas || []).map((o) => o.nombre).join(', ');
         return `
@@ -711,7 +730,7 @@ function renderModalEditar() {
   document.getElementById('btn-cerrar-editar').addEventListener('click', cerrarModalEditar);
   document.querySelectorAll('.btn-quitar-item-edit').forEach((btn) => {
     btn.addEventListener('click', async () => {
-      await fetch(`/api/pedido_items/${btn.dataset.itemId}`, { method: 'DELETE' });
+      await fetch(`/api/pedido_items/${btn.dataset.itemId}/cancelar`, { method: 'PATCH' });
       await refrescarPedidoEditando();
       renderModalEditar();
     });
@@ -805,14 +824,18 @@ document.getElementById('gasto-monto').addEventListener('input', (e) => {
   e.target.value = e.target.value.replace(/[^0-9.]/g, '');
 });
 
+let corteActual = null;
+let corteCerradoActual = null;
+
 async function cargarCorte() {
   const sucursalId = document.getElementById('sucursal-select').value;
   const fecha = document.getElementById('corte-fecha').value;
   if (!fecha) return;
 
-  const corte = await fetch(`/api/corte?sucursal_id=${sucursalId}&fecha=${fecha}`).then((r) => r.json());
+  corteActual = await fetch(`/api/corte?sucursal_id=${sucursalId}&fecha=${fecha}`).then((r) => r.json());
+  corteCerradoActual = await fetch(`/api/corte/cerrado?sucursal_id=${sucursalId}&fecha=${fecha}`).then((r) => r.json());
 
-  document.getElementById('corte-tabla-body').innerHTML = corte.resumen
+  document.getElementById('corte-tabla-body').innerHTML = corteActual.resumen
     .map(
       (r) => `
       <tr>
@@ -824,8 +847,21 @@ async function cargarCorte() {
     )
     .join('');
 
-  document.getElementById('corte-pedidos-cobrados').textContent = `Pedidos cobrados: ${corte.pedidosCobrados}`;
-  document.getElementById('corte-total-neto').textContent = `$${corte.totalNeto.toFixed(2)}`;
+  document.getElementById('corte-pedidos-cobrados').textContent = `Pedidos cobrados: ${corteActual.pedidosCobrados}`;
+  document.getElementById('corte-total-envios').textContent = `$${corteActual.totalEnvios.toFixed(2)}`;
+  document.getElementById('corte-total-neto').textContent = `$${corteActual.totalNeto.toFixed(2)}`;
+
+  const banner = document.getElementById('corte-cerrado-banner');
+  const formGasto = document.getElementById('btn-agregar-gasto').closest('.form-inline');
+  if (corteCerradoActual) {
+    const hora = new Date(corteCerradoActual.cerrado_en).toLocaleString('es-MX');
+    banner.style.display = 'block';
+    banner.textContent = `✅ Corte cerrado el ${hora}. Diferencia total: $${Number(corteCerradoActual.diferencia).toFixed(2)}`;
+    formGasto.style.display = 'none';
+  } else {
+    banner.style.display = 'none';
+    formGasto.style.display = 'flex';
+  }
 
   const gastos = await fetch(`/api/gastos?sucursal_id=${sucursalId}&fecha=${fecha}`).then((r) => r.json());
   document.getElementById('gastos-tabla-body').innerHTML =
@@ -836,7 +872,7 @@ async function cargarCorte() {
         <td>${g.descripcion}</td>
         <td>${METODOS_LABEL[g.metodo_pago]}</td>
         <td class="num">$${Number(g.monto).toFixed(2)}</td>
-        <td><button class="btn-eliminar-fila" data-id="${g.id}">🗑️</button></td>
+        <td>${corteCerradoActual ? '' : `<button class="btn-eliminar-fila" data-id="${g.id}">🗑️</button>`}</td>
       </tr>`
       )
       .join('') || '<tr><td colspan="4" style="text-align:center;color:#999">Sin gastos ese día</td></tr>';
@@ -847,6 +883,81 @@ async function cargarCorte() {
       cargarCorte();
     });
   });
+
+  renderCuadreCaja();
+}
+
+function renderCuadreCaja() {
+  const cont = document.getElementById('cuadre-caja');
+
+  if (corteCerradoActual) {
+    const filas = corteCerradoActual.resumen
+      .map(
+        (r) => `
+      <tr>
+        <td>${METODOS_LABEL[r.metodo]}</td>
+        <td class="num">$${Number(r.neto).toFixed(2)}</td>
+        <td class="num">$${Number(r.contado).toFixed(2)}</td>
+        <td class="num" style="color:${Math.abs(r.diferencia) < 0.01 ? '#1a7d3a' : '#b8232f'}">$${Number(r.diferencia).toFixed(2)}</td>
+      </tr>`
+      )
+      .join('');
+    cont.innerHTML = `
+      <table class="tabla-simple">
+        <thead><tr><th>Método</th><th class="num">Debía haber</th><th class="num">Contado</th><th class="num">Diferencia</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>`;
+    return;
+  }
+
+  cont.innerHTML = `
+    <table class="tabla-simple">
+      <thead><tr><th>Método</th><th class="num">Debe haber</th><th class="num">Contado</th></tr></thead>
+      <tbody>
+        ${corteActual.resumen
+          .map(
+            (r) => `
+          <tr>
+            <td>${METODOS_LABEL[r.metodo]}</td>
+            <td class="num">$${r.neto.toFixed(2)}</td>
+            <td class="num"><input type="text" inputmode="decimal" class="input-contado" data-metodo="${r.metodo}" placeholder="0.00" style="width:90px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+          </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+    <button id="btn-cerrar-corte" class="btn-enviar" style="margin:0 12px 16px;width:calc(100% - 24px)">Cerrar corte</button>`;
+
+  document.querySelectorAll('.input-contado').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
+    });
+  });
+
+  document.getElementById('btn-cerrar-corte').addEventListener('click', cerrarCorte);
+}
+
+async function cerrarCorte() {
+  const sucursal_id = document.getElementById('sucursal-select').value;
+  const fecha = document.getElementById('corte-fecha').value;
+  const contado = {};
+  document.querySelectorAll('.input-contado').forEach((el) => {
+    contado[el.dataset.metodo] = Number(el.value) || 0;
+  });
+
+  if (!confirm('¿Cerrar el corte del día? Ya no vas a poder registrar más gastos para esta fecha.')) return;
+
+  const btn = document.getElementById('btn-cerrar-corte');
+  btn.disabled = true;
+  btn.textContent = 'Cerrando...';
+
+  await fetch('/api/corte/cerrar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursal_id, fecha, contado }),
+  });
+
+  cargarCorte();
 }
 
 async function agregarGasto() {
@@ -879,6 +990,7 @@ async function cargarEnvios() {
   const sucursalId = document.getElementById('sucursal-select').value;
   state.envios = await fetch(`/api/envios?sucursal_id=${sucursalId}`).then((r) => r.json());
   renderEnvios();
+  renderColoniaOptions();
 }
 
 function renderEnvios() {
