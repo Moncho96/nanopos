@@ -407,6 +407,24 @@ function abrirModalCobro(pedidoId) {
 }
 
 function renderModalCobro() {
+  // Guarda en qué campo estabas escribiendo antes de reconstruir el HTML,
+  // para devolverle el foco después (si no, cada tecla te sacaba del campo)
+  const activeEl = document.activeElement;
+  let focoGuardado = null;
+  if (activeEl && activeEl.dataset && activeEl.dataset.idx !== undefined) {
+    let clase = null;
+    if (activeEl.classList.contains('pago-monto')) clase = 'pago-monto';
+    else if (activeEl.classList.contains('pago-recibido')) clase = 'pago-recibido';
+    if (clase) {
+      focoGuardado = {
+        clase,
+        idx: activeEl.dataset.idx,
+        inicio: activeEl.selectionStart,
+        fin: activeEl.selectionEnd,
+      };
+    }
+  }
+
   const total = Number(pedidoEnCobro.total);
   const asignado = pagosEnCurso.reduce((sum, p) => sum + (Number(p.monto) || 0), 0);
   const restante = Number((total - asignado).toFixed(2));
@@ -500,6 +518,15 @@ function renderModalCobro() {
   const btnConfirmar = document.getElementById('btn-confirmar-cobro');
   if (btnConfirmar && !btnConfirmar.disabled) {
     btnConfirmar.addEventListener('click', confirmarCobro);
+  }
+
+  // Devuelve el foco (y la posición del cursor) al campo donde estabas escribiendo
+  if (focoGuardado) {
+    const el = document.querySelector(`.${focoGuardado.clase}[data-idx="${focoGuardado.idx}"]`);
+    if (el) {
+      el.focus();
+      el.setSelectionRange(focoGuardado.inicio, focoGuardado.fin);
+    }
   }
 }
 
