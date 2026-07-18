@@ -3,39 +3,108 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-<title>El Nano - Pedidos</title>
+<title>El Nano - POS</title>
 <link rel="manifest" href="manifest.json" />
 <style>
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #f4f4f4; color: #222; }
-  header { background: #b8232f; color: white; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
-  header h1 { font-size: 18px; margin: 0; }
-  select { padding: 8px; border-radius: 6px; border: none; font-size: 14px; }
-  .layout { display: flex; flex-direction: column; }
-  @media (min-width: 800px) { .layout { flex-direction: row; } }
-  .menu { flex: 2; padding: 12px; }
-  .cart { flex: 1; background: white; padding: 12px; border-left: 1px solid #ddd; min-height: 300px; }
-  .tabs { display: flex; gap: 8px; overflow-x: auto; margin-bottom: 10px; }
-  .tab { padding: 8px 14px; background: #eee; border-radius: 20px; white-space: nowrap; cursor: pointer; font-size: 14px; }
-  .tab.active { background: #b8232f; color: white; }
-  .productos { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
-  .producto { background: white; border-radius: 10px; padding: 12px; text-align: center; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-  .producto:active { transform: scale(0.97); }
-  .producto .nombre { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
-  .producto .precio { font-size: 13px; color: #666; }
-  .cart-item { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
-  .cart-item button { background: none; border: none; color: #b8232f; font-size: 18px; cursor: pointer; }
-  .cliente-box { background: #fff; padding: 10px; border-radius: 8px; margin-bottom: 12px; }
-  .cliente-box input { width: 100%; padding: 8px; margin-bottom: 6px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
-  .total { font-size: 18px; font-weight: bold; margin: 12px 0; text-align: right; }
-  .btn-enviar { width: 100%; padding: 14px; background: #1a7d3a; color: white; border: none; border-radius: 8px; font-size: 16px; font-weight: bold; cursor: pointer; }
-  .btn-enviar:disabled { background: #aaa; }
-  .tipo-pedido { display: flex; gap: 8px; margin-bottom: 10px; }
-  .tipo-pedido button { flex: 1; padding: 8px; border: 1px solid #ddd; background: white; border-radius: 6px; cursor: pointer; }
-  .tipo-pedido button.active { background: #b8232f; color: white; border-color: #b8232f; }
-  #status-msg { text-align: center; padding: 10px; font-size: 14px; }
+  button { font-family: inherit; }
 
-  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; justify-content: center; z-index: 100; }
+  /* ---------- Header ---------- */
+  header { background: #b8232f; color: white; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  header h1 { font-size: 17px; margin: 0; }
+  header .right { display: flex; gap: 8px; align-items: center; }
+  select { padding: 8px; border-radius: 6px; border: none; font-size: 14px; }
+  .icon-btn { background: rgba(255,255,255,0.15); border: none; color: white; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; cursor: pointer; }
+
+  /* ---------- Tabs de tipo + nuevo pedido ---------- */
+  .tipo-tabs { display: flex; align-items: center; gap: 6px; padding: 10px 12px 0; background: white; flex-wrap: wrap; }
+  .tipo-tab { background: none; border: none; padding: 10px 12px; border-radius: 8px 8px 0 0; font-size: 14px; font-weight: 600; color: #888; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .tipo-tab.active { color: #b8232f; border-bottom: 3px solid #b8232f; }
+  .tipo-tab .count { background: #eee; color: #666; border-radius: 10px; padding: 1px 7px; font-size: 12px; }
+  .tipo-tab.active .count { background: #fdeaea; color: #b8232f; }
+  .tabs-spacer { flex: 1; }
+
+  .nuevo-pedido-wrap { position: relative; margin: 6px 0; }
+  .btn-nuevo-pedido { background: #1a7d3a; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+  .nuevo-pedido-menu { position: absolute; right: 0; top: 44px; background: white; border-radius: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); overflow: hidden; z-index: 50; min-width: 180px; }
+  .nuevo-pedido-menu button { display: block; width: 100%; text-align: left; padding: 12px 16px; border: none; background: white; font-size: 14px; cursor: pointer; }
+  .nuevo-pedido-menu button:hover { background: #f4f4f4; }
+
+  /* ---------- Filtros de estado ---------- */
+  .filtros-estado { display: flex; gap: 8px; padding: 10px 12px; background: white; border-top: 1px solid #eee; flex-wrap: wrap; }
+  .filtro { padding: 7px 14px; background: #f0f0f0; border-radius: 20px; cursor: pointer; font-size: 13px; border: none; font-weight: 600; color: #555; }
+  .filtro.active { background: #b8232f; color: white; }
+
+  /* ---------- Resumen de caja plegable ---------- */
+  .resumen-toggle { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; background: white; margin: 10px 12px 0; border-radius: 10px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.06); font-size: 14px; font-weight: 600; color: #444; }
+  .resumen-toggle .flecha { transition: transform 0.2s; }
+  .resumen-toggle.abierto .flecha { transform: rotate(180deg); }
+  .resumen-panel { margin: 0 12px 10px; background: white; border-radius: 0 0 10px 10px; padding: 0 16px 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+  .resumen-fila { display: flex; justify-content: space-between; padding: 7px 0; font-size: 14px; border-bottom: 1px solid #f2f2f2; }
+  .resumen-fila:last-child { border-bottom: none; }
+  .resumen-fila .metodo { color: #666; }
+  .resumen-fila .valor { font-weight: 600; }
+  .resumen-total-linea { display: flex; justify-content: space-between; padding-top: 10px; margin-top: 6px; border-top: 2px solid #eee; font-size: 15px; font-weight: bold; }
+
+  /* ---------- Lista de pedidos ---------- */
+  .lista-pedidos { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .pedido-row { background: white; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); cursor: pointer; }
+  .pedido-row-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .pedido-row-id { font-weight: bold; font-size: 14px; color: #333; }
+  .pedido-row-hora { font-size: 12px; color: #999; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; }
+  .badge-mesa { background: #e7f0ff; color: #0056b3; }
+  .badge-para_llevar { background: #fff3cd; color: #856404; }
+  .badge-domicilio { background: #e2d9f3; color: #5a2ca0; }
+  .badge-pagado { background: #d4edda; color: #1a7d3a; }
+  .badge-pendiente { background: #f8d7da; color: #b8232f; }
+  .pedido-row-cliente { font-size: 13px; color: #555; margin-bottom: 4px; }
+  .pedido-row-items { font-size: 12px; color: #999; margin-bottom: 8px; }
+  .pedido-row-bottom { display: flex; justify-content: space-between; align-items: center; }
+  .pedido-row-total { font-size: 16px; font-weight: bold; }
+  #sin-pedidos { text-align: center; padding: 50px 20px; color: #aaa; }
+  #sin-pedidos .icono { font-size: 40px; margin-bottom: 10px; }
+
+  /* ---------- Overlay: tomar / editar pedido ---------- */
+  .overlay { position: fixed; inset: 0; background: #f4f4f4; z-index: 200; display: none; flex-direction: column; }
+  .overlay.abierto { display: flex; }
+  .overlay-header { background: #b8232f; color: white; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
+  .overlay-header button { background: rgba(255,255,255,0.15); border: none; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .overlay-header .titulo { font-size: 16px; font-weight: bold; flex: 1; }
+  .overlay-body { flex: 1; display: flex; overflow: hidden; }
+  .cat-sidebar { width: 100px; background: white; overflow-y: auto; flex-shrink: 0; border-right: 1px solid #eee; }
+  .cat-sidebar-item { padding: 14px 8px; text-align: center; font-size: 12px; font-weight: 600; color: #666; cursor: pointer; border-left: 3px solid transparent; }
+  .cat-sidebar-item.active { color: #b8232f; background: #fdf1f1; border-left-color: #b8232f; }
+  .productos-area { flex: 1; overflow-y: auto; padding: 12px; }
+  .buscador { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; margin-bottom: 12px; }
+  .productos-grid-overlay { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .prod-tile { background: white; border-radius: 10px; padding: 10px; text-align: center; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
+  .prod-tile:active { transform: scale(0.96); }
+  .prod-tile .emoji { font-size: 34px; margin-bottom: 6px; }
+  .prod-tile .nombre { font-size: 12.5px; font-weight: 600; line-height: 1.3; min-height: 32px; }
+  .prod-tile .precio { font-size: 12px; color: #888; margin-top: 4px; }
+
+  .ticket-panel { width: 320px; background: white; border-left: 1px solid #eee; display: flex; flex-direction: column; flex-shrink: 0; }
+  @media (max-width: 850px) { .ticket-panel { width: 260px; } .cat-sidebar { width: 78px; } }
+  .ticket-header { padding: 12px; border-bottom: 1px solid #eee; }
+  .ticket-header input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; margin-bottom: 6px; }
+  .ticket-items { flex: 1; overflow-y: auto; padding: 6px 12px; }
+  .ticket-item { padding: 8px 0; border-bottom: 1px solid #f2f2f2; font-size: 13px; }
+  .ticket-item-top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .ticket-item small { color: #999; }
+  .ticket-item button { background: none; border: none; color: #b8232f; font-size: 17px; cursor: pointer; padding: 0 0 0 8px; }
+  .ticket-footer { padding: 12px; border-top: 1px solid #eee; }
+  .ticket-total-linea { display: flex; justify-content: space-between; font-size: 18px; font-weight: bold; margin-bottom: 12px; }
+  .ticket-botones { display: flex; gap: 8px; }
+  .ticket-botones button { flex: 1; padding: 12px; border-radius: 8px; border: none; font-size: 13px; font-weight: bold; cursor: pointer; }
+  .btn-t-cancelar { background: #f0f0f0; color: #555; }
+  .btn-t-pago { background: #0056b3; color: white; }
+  .btn-t-aceptar { background: #1a7d3a; color: white; }
+  #ticket-status { text-align: center; font-size: 12px; padding: 6px 0 0; color: #b8232f; }
+
+  /* ---------- Modales genéricos (modificadores, cobro) ---------- */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; justify-content: center; z-index: 300; }
   @media (min-width: 600px) { .modal-overlay { align-items: center; } }
   .modal-box { background: white; border-radius: 14px 14px 0 0; width: 100%; max-width: 480px; max-height: 85vh; overflow-y: auto; padding: 16px; }
   @media (min-width: 600px) { .modal-box { border-radius: 14px; } }
@@ -51,114 +120,136 @@
   .modal-botones button { flex: 1; padding: 12px; border-radius: 8px; font-size: 15px; border: none; cursor: pointer; }
   .btn-cancelar { background: #eee; color: #333; }
   .btn-agregar { background: #1a7d3a; color: white; font-weight: bold; }
-
-  .nav-vistas { display: flex; gap: 8px; padding: 10px 12px 0; background: #f4f4f4; }
-  .nav-vistas button { flex: 1; padding: 12px; border: none; border-radius: 8px 8px 0 0; background: #ddd; font-size: 15px; font-weight: 600; cursor: pointer; }
-  .nav-vistas button.active { background: white; color: #b8232f; }
-
-  .filtros { display: flex; gap: 8px; padding: 12px; flex-wrap: wrap; }
-  .filtro { padding: 8px 14px; background: #eee; border-radius: 20px; cursor: pointer; font-size: 14px; border: none; }
-  .filtro.active { background: #b8232f; color: white; }
-  .lista-cobro { padding: 0 12px 24px; display: flex; flex-direction: column; gap: 10px; }
-  .pedido-card { background: white; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-  .pedido-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  .pedido-top .id { font-weight: bold; font-size: 15px; }
-  .badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; }
-  .badge-mesa { background: #e7f0ff; color: #0056b3; }
-  .badge-para_llevar { background: #fff3cd; color: #856404; }
-  .badge-domicilio { background: #e2d9f3; color: #5a2ca0; }
-  .pedido-items-cobro { font-size: 13px; color: #555; margin-bottom: 8px; line-height: 1.5; }
-  .pedido-cliente { font-size: 13px; color: #777; margin-bottom: 8px; }
-  .pedido-bottom { display: flex; justify-content: space-between; align-items: center; }
-  .btn-cobrar { background: #1a7d3a; color: white; border: none; padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; }
-  .pago-info { font-size: 13px; color: #1a7d3a; font-weight: 600; }
-  .modal-box .total-modal { font-size: 22px; font-weight: bold; margin: 10px 0 16px; }
-  .metodo-btn { width: 100%; padding: 14px; margin-bottom: 8px; border: 1px solid #ddd; border-radius: 8px; background: white; font-size: 15px; cursor: pointer; text-align: left; }
-  .metodo-btn:active { background: #f4f4f4; }
   .btn-cancelar-modal { width: 100%; padding: 10px; margin-top: 8px; background: none; border: none; color: #888; cursor: pointer; }
-  #sin-pedidos { text-align: center; padding: 40px; color: #999; }
+  .modal-box .total-modal { font-size: 22px; font-weight: bold; margin: 10px 0 16px; }
 
-  .form-inline { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px; background: white; margin: 0 12px 12px; border-radius: 10px; }
+  /* ---------- Menú lateral (Corte / Envíos) ---------- */
+  .drawer-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 250; display: none; }
+  .drawer-overlay.abierto { display: block; }
+  .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 260px; background: white; box-shadow: -2px 0 10px rgba(0,0,0,0.15); padding: 16px; }
+  .drawer h3 { margin-top: 0; font-size: 16px; }
+  .drawer button.item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; padding: 14px 10px; border: none; background: none; font-size: 15px; border-radius: 8px; cursor: pointer; }
+  .drawer button.item:hover { background: #f4f4f4; }
+
+  .full-overlay { position: fixed; inset: 0; background: #f4f4f4; z-index: 220; display: none; flex-direction: column; overflow-y: auto; }
+  .full-overlay.abierto { display: flex; }
+  .full-overlay-header { background: #b8232f; color: white; padding: 12px 14px; display: flex; align-items: center; gap: 12px; }
+  .full-overlay-header button { background: rgba(255,255,255,0.15); border: none; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; }
+  .full-overlay-header .titulo { font-size: 16px; font-weight: bold; }
+
+  .form-inline { display: flex; gap: 8px; flex-wrap: wrap; padding: 12px; background: white; margin: 12px 12px 12px; border-radius: 10px; }
   .form-inline input, .form-inline select { padding: 8px; border-radius: 6px; border: 1px solid #ddd; font-size: 14px; }
   .form-inline input[type="text"] { flex: 1; min-width: 120px; }
   .form-inline button { background: #1a7d3a; color: white; border: none; padding: 8px 14px; border-radius: 6px; cursor: pointer; font-weight: 600; }
 
-  .tabla-simple { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; margin: 0 12px 12px; width: calc(100% - 24px); }
+  .tabla-simple { width: calc(100% - 24px); border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; margin: 0 12px 12px; }
   .tabla-simple th, .tabla-simple td { padding: 10px 12px; text-align: left; font-size: 14px; border-bottom: 1px solid #eee; }
   .tabla-simple th { background: #f4f4f4; font-size: 12px; text-transform: uppercase; color: #888; }
   .tabla-simple .num { text-align: right; }
   .tabla-simple .btn-eliminar-fila { background: none; border: none; color: #b8232f; cursor: pointer; font-size: 16px; }
-
   .resumen-total { display: flex; justify-content: space-between; padding: 14px 16px; margin: 0 12px 16px; background: white; border-radius: 10px; font-size: 16px; font-weight: bold; }
-
-  .editar-item-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #eee; font-size: 14px; }
-  .editar-item-row button { background: none; border: none; color: #b8232f; font-size: 18px; cursor: pointer; }
-  .btn-agregar-producto { width: 100%; padding: 10px; margin-top: 10px; border: 1px dashed #ccc; background: none; border-radius: 8px; color: #555; cursor: pointer; }
 </style>
 </head>
 <body>
+
 <header>
   <h1>🌮 El Nano</h1>
-  <select id="sucursal-select"></select>
+  <div class="right">
+    <select id="sucursal-select"></select>
+    <button class="icon-btn" id="btn-menu">☰</button>
+  </div>
 </header>
 
-<div class="nav-vistas">
-  <button id="nav-pedido" class="active">📝 Tomar pedido</button>
-  <button id="nav-cobro">💵 Cobrar</button>
-  <button id="nav-corte">📊 Corte</button>
-  <button id="nav-envios">🚚 Envíos</button>
-</div>
-
-<div id="vista-pedido">
-<div class="layout">
-  <div class="menu">
-    <div class="tabs" id="tabs"></div>
-    <div class="productos" id="productos"></div>
-  </div>
-
-  <div class="cart">
-    <div class="cliente-box">
-      <input type="text" id="cliente-nombre" placeholder="Nombre del cliente * (obligatorio)" required />
-      <input type="tel" id="cliente-telefono" placeholder="Teléfono (opcional)" />
-      <input type="text" id="cliente-direccion" placeholder="Dirección (para domicilio)" />
-      <select id="cliente-colonia">
-        <option value="">Colonia (para domicilio)</option>
-      </select>
-      <div id="envio-info" style="font-size:13px;color:#1a7d3a;font-weight:600;display:none"></div>
+<div class="tipo-tabs">
+  <button class="tipo-tab active" data-tipo="todos">Todo <span class="count" id="count-todos">0</span></button>
+  <button class="tipo-tab" data-tipo="mesa">🍽️ Mesas <span class="count" id="count-mesa">0</span></button>
+  <button class="tipo-tab" data-tipo="para_llevar">🥡 Mostrador <span class="count" id="count-para_llevar">0</span></button>
+  <button class="tipo-tab" data-tipo="domicilio">🛵 A domicilio <span class="count" id="count-domicilio">0</span></button>
+  <div class="tabs-spacer"></div>
+  <div class="nuevo-pedido-wrap">
+    <button class="btn-nuevo-pedido" id="btn-nuevo-pedido">+ Nuevo pedido ▾</button>
+    <div class="nuevo-pedido-menu" id="nuevo-pedido-menu" style="display:none">
+      <button data-tipo="mesa">🍽️ En el local (mesa)</button>
+      <button data-tipo="para_llevar">🥡 Para llevar</button>
+      <button data-tipo="domicilio">🛵 A domicilio</button>
     </div>
+  </div>
+</div>
 
-    <div class="tipo-pedido">
-      <button data-tipo="mesa" class="active">Mesa</button>
-      <button data-tipo="para_llevar">Para llevar</button>
-      <button data-tipo="domicilio">Domicilio</button>
+<div class="filtros-estado">
+  <button class="filtro active" data-filtro="pendientes">Por cobrar</button>
+  <button class="filtro" data-filtro="cobrados">Cobrados</button>
+  <button class="filtro" data-filtro="todos">Todo</button>
+</div>
+
+<div class="resumen-toggle" id="resumen-toggle">
+  <span>📊 Resumen de caja de hoy</span>
+  <span class="flecha">▾</span>
+</div>
+<div class="resumen-panel" id="resumen-panel" style="display:none"></div>
+
+<div class="lista-pedidos" id="lista-pedidos"></div>
+<div id="sin-pedidos" style="display:none">
+  <div class="icono">🍽️</div>
+  <div>No hay pedidos aquí</div>
+</div>
+
+<!-- Overlay: tomar / editar pedido -->
+<div class="overlay" id="overlay-pedido">
+  <div class="overlay-header">
+    <button id="btn-cerrar-overlay">✕</button>
+    <span class="titulo" id="overlay-titulo">Nuevo pedido</span>
+  </div>
+  <div class="overlay-body">
+    <div class="cat-sidebar" id="cat-sidebar"></div>
+    <div class="productos-area">
+      <input type="text" class="buscador" id="buscador-producto" placeholder="Buscar producto..." />
+      <div class="productos-grid-overlay" id="productos-grid-overlay"></div>
     </div>
-
-    <div id="cart-items"></div>
-    <div class="total">Total: $<span id="total">0.00</span></div>
-    <button class="btn-enviar" id="btn-enviar">Enviar a cocina</button>
-    <div id="status-msg"></div>
+    <div class="ticket-panel">
+      <div class="ticket-header">
+        <input type="text" id="ticket-cliente-nombre" placeholder="Nombre del cliente * (obligatorio)" />
+        <input type="tel" id="ticket-cliente-telefono" placeholder="Teléfono (opcional)" />
+        <input type="text" id="ticket-cliente-direccion" placeholder="Dirección (domicilio)" style="display:none" />
+        <select id="ticket-cliente-colonia" style="display:none; width:100%">
+          <option value="">Colonia</option>
+        </select>
+        <div id="ticket-envio-info" style="font-size:12px;color:#1a7d3a;font-weight:600;display:none;margin-top:4px"></div>
+      </div>
+      <div class="ticket-items" id="ticket-items"></div>
+      <div class="ticket-footer">
+        <div class="ticket-total-linea">Total <span id="ticket-total">$0.00</span></div>
+        <div class="ticket-botones">
+          <button class="btn-t-cancelar" id="btn-t-cancelar">Cancelar</button>
+          <button class="btn-t-pago" id="btn-t-pago">Pago</button>
+          <button class="btn-t-aceptar" id="btn-t-aceptar">Aceptar</button>
+        </div>
+        <div id="ticket-status"></div>
+      </div>
+    </div>
   </div>
 </div>
-</div>
 
-<div id="vista-cobro" style="display:none">
-  <div class="filtros">
-    <button class="filtro active" data-filtro="pendientes">Por cobrar</button>
-    <button class="filtro" data-filtro="cobrados">Cobrados</button>
-    <button class="filtro" data-filtro="todos">Todos</button>
+<!-- Menú lateral -->
+<div class="drawer-overlay" id="drawer-overlay">
+  <div class="drawer">
+    <h3>Menú</h3>
+    <button class="item" id="btn-abrir-corte">📊 Corte de caja</button>
+    <button class="item" id="btn-abrir-envios">🚚 Envíos por colonia</button>
   </div>
-  <div class="lista-cobro" id="lista-cobro"></div>
-  <div id="sin-pedidos" style="display:none">No hay pedidos aquí</div>
 </div>
 
-<div id="vista-corte" style="display:none">
+<!-- Corte de caja -->
+<div class="full-overlay" id="overlay-corte">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-corte">✕</button>
+    <span class="titulo">Corte de caja</span>
+  </div>
   <div class="form-inline">
     <input type="date" id="corte-fecha" />
     <button id="btn-cargar-corte">Ver corte</button>
   </div>
-
   <div id="corte-cerrado-banner" style="display:none;margin:0 12px 12px;padding:12px;background:#d4edda;color:#1a7d3a;border-radius:10px;font-weight:600"></div>
-
   <table class="tabla-simple">
     <thead><tr><th>Método</th><th class="num">Ventas</th><th class="num">Gastos</th><th class="num">Debe haber</th></tr></thead>
     <tbody id="corte-tabla-body"></tbody>
@@ -187,7 +278,12 @@
   <div id="cuadre-caja"></div>
 </div>
 
-<div id="vista-envios" style="display:none">
+<!-- Envíos por colonia -->
+<div class="full-overlay" id="overlay-envios">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-envios">✕</button>
+    <span class="titulo">Envíos por colonia</span>
+  </div>
   <div class="form-inline">
     <input type="text" id="envio-colonia" placeholder="Colonia" />
     <input type="text" inputmode="decimal" id="envio-costo" placeholder="Costo" style="width:100px" />
