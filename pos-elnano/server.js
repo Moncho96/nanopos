@@ -115,7 +115,7 @@ app.post('/api/pedidos', async (req, res) => {
     const pedidoRes = await client.query(
       `INSERT INTO pedidos (sucursal_id, cliente_id, tipo, notas, total)
        VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [sucursal_id, cliente_id || null, tipo || 'mostrador', notas || null, total]
+      [sucursal_id, cliente_id || null, tipo || 'mesa', notas || null, total]
     );
     const pedido = pedidoRes.rows[0];
 
@@ -164,7 +164,7 @@ app.post('/api/pedidos', async (req, res) => {
 });
 
 app.get('/api/pedidos', async (req, res) => {
-  const { sucursal_id, estado } = req.query;
+  const { sucursal_id, estado, pagado } = req.query;
   let query = `
     SELECT p.*, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono
     FROM pedidos p
@@ -179,6 +179,10 @@ app.get('/api/pedidos', async (req, res) => {
     params.push(estado);
     query += ` AND p.estado = $${params.length}`;
   }
+  if (pagado === 'true' || pagado === 'false') {
+    params.push(pagado === 'true');
+    query += ` AND p.pagado = $${params.length}`;
+  }
   query += ' ORDER BY p.creado_en DESC LIMIT 100';
 
   const { rows: pedidos } = await pool.query(query, params);
@@ -192,6 +196,12 @@ app.get('/api/pedidos', async (req, res) => {
       [pedido.id]
     );
     pedido.items = items;
+
+    const { rows: pagos } = await pool.query(
+      `SELECT * FROM pagos WHERE pedido_id = $1 ORDER BY id`,
+      [pedido.id]
+    );
+    pedido.pagos = pagos;
   }
 
   res.json(pedidos);
@@ -225,6 +235,71 @@ app.patch('/api/pedido_items/:id/estado', async (req, res) => {
     io.to(`sucursal_${item.sucursal_id}`).emit('item_actualizado', item);
   }
   res.json(item);
+});
+
+app.post('/api/pedidos/:id/pagos', async (req, res) => {
+  const { id } = req.params;
+  const { pagos } = req.body; // [{ metodo, monto, recibido }]
+
+  if (!pagos || !pagos.length) {
+    return res.status(400).json({ error: 'Faltan los pagos' });
+  }
+  for (const p of pagos) {
+    if (!['efectivo', 'tarjeta', 'transferencia'].includes(p.metodo)) {
+      return res.status(400).json({ error: `Método de pago inválido: ${p.metodo}` });
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const pedidoRes = await client.query('SELECT * FROM pedidos WHERE id = $1', [id]);
+    const pedido = pedidoRes.rows[0];
+    if (!pedido) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+
+    // Borra pagos anteriores de este pedido (por si se está corrigiendo un cobro)
+    await client.query('DELETE FROM pagos WHERE pedido_id = $1', [id]);
+
+    const pagosGuardados = [];
+    for (const p of pagos) {
+      const recibido = p.metodo === 'efectivo' && p.recibido ? Number(p.recibido) : null;
+      const cambio = recibido !== null ? Number((recibido - Number(p.monto)).toFixed(2)) : null;
+      const r = await client.query(
+        `INSERT INTO pagos (pedido_id, metodo, monto, recibido, cambio)
+         VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+        [id, p.metodo, p.monto, recibido, cambio]
+      );
+      pagosGuardados.push(r.rows[0]);
+    }
+
+    const totalPagado = pagosGuardados.reduce((sum, p) => sum + Number(p.monto), 0);
+    const metodosUnicos = [...new Set(pagosGuardados.map((p) => p.metodo))];
+    const metodoResumen = metodosUnicos.length > 1 ? 'mixto' : metodosUnicos[0];
+    const quedaCubierto = totalPagado >= Number(pedido.total) - 0.01;
+
+    const pedidoActualizadoRes = await client.query(
+      `UPDATE pedidos SET pagado = $1, metodo_pago = $2, pagado_en = now() WHERE id = $3 RETURNING *`,
+      [quedaCubierto, metodoResumen, id]
+    );
+    const pedidoActualizado = pedidoActualizadoRes.rows[0];
+
+    await client.query('COMMIT');
+
+    pedidoActualizado.pagos = pagosGuardados;
+    io.to(`sucursal_${pedidoActualizado.sucursal_id}`).emit('pedido_actualizado', pedidoActualizado);
+
+    res.json(pedidoActualizado);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'No se pudo registrar el cobro' });
+  } finally {
+    client.release();
+  }
 });
 
 // ---------- Planeación de compras con Claude ----------
