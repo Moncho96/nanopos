@@ -440,7 +440,7 @@ function renderModalCobro() {
           <option value="tarjeta" ${p.metodo === 'tarjeta' ? 'selected' : ''}>💳 Tarjeta</option>
           <option value="transferencia" ${p.metodo === 'transferencia' ? 'selected' : ''}>📱 Transferencia</option>
         </select>
-        <input type="number" step="0.01" data-idx="${i}" class="pago-monto" value="${p.monto}" style="width:100px;padding:8px;border-radius:6px;border:1px solid #ddd" />
+        <input type="text" inputmode="decimal" data-idx="${i}" class="pago-monto" value="${p.monto}" style="width:100px;padding:8px;border-radius:6px;border:1px solid #ddd" />
         ${pagosEnCurso.length > 1 ? `<button data-idx="${i}" class="pago-quitar" style="border:none;background:none;color:#b8232f;font-size:18px">×</button>` : ''}
       </div>
       ${
@@ -448,7 +448,7 @@ function renderModalCobro() {
           ? `
         <div style="display:flex;gap:8px;align-items:center;font-size:13px">
           <label style="flex:1">Recibió del cliente:</label>
-          <input type="number" step="0.01" data-idx="${i}" class="pago-recibido" value="${p.recibido}" placeholder="$" style="width:100px;padding:6px;border-radius:6px;border:1px solid #ddd" />
+          <input type="text" inputmode="decimal" data-idx="${i}" class="pago-recibido" value="${p.recibido}" placeholder="$" style="width:100px;padding:6px;border-radius:6px;border:1px solid #ddd" />
         </div>
         ${
           p.recibido && Number(p.recibido) >= Number(p.monto)
@@ -492,12 +492,14 @@ function renderModalCobro() {
   });
   document.querySelectorAll('.pago-monto').forEach((el) => {
     el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
       pagosEnCurso[Number(el.dataset.idx)].monto = el.value;
       renderModalCobro();
     });
   });
   document.querySelectorAll('.pago-recibido').forEach((el) => {
     el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
       pagosEnCurso[Number(el.dataset.idx)].recibido = el.value;
       renderModalCobro();
     });
