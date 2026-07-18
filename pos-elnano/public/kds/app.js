@@ -49,6 +49,9 @@ function renderTicket(pedido) {
       const detalle = opciones.length
         ? `<div style="font-size:12px;opacity:0.75;margin-left:12px">${opciones.map((o) => o.nombre).join(', ')}</div>`
         : '';
+      if (it.cancelado) {
+        return `<div class="item" style="color:#ff5c5c;text-decoration:line-through"><span>${it.cantidad}x ${it.producto_nombre} (cancelado)</span></div>`;
+      }
       return `<div class="item"><span>${it.cantidad}x ${it.producto_nombre}</span></div>${detalle}`;
     })
     .join('');
@@ -82,10 +85,7 @@ async function avanzarEstado(pedidoId, destino) {
   });
 }
 
-socket.on('nuevo_pedido', (pedido) => {
-  pedidos.push(pedido);
-  render();
-  // sonido simple para avisar de pedido nuevo
+function sonarAviso() {
   try {
     const audio = new AudioContext();
     const osc = audio.createOscillator();
@@ -94,6 +94,12 @@ socket.on('nuevo_pedido', (pedido) => {
     osc.start();
     setTimeout(() => osc.stop(), 200);
   } catch (e) {}
+}
+
+socket.on('nuevo_pedido', (pedido) => {
+  pedidos.push(pedido);
+  render();
+  sonarAviso();
 });
 
 socket.on('pedido_actualizado', (pedidoActualizado) => {
@@ -101,7 +107,13 @@ socket.on('pedido_actualizado', (pedidoActualizado) => {
     pedidos = pedidos.filter((p) => p.id !== pedidoActualizado.id);
   } else {
     const idx = pedidos.findIndex((p) => p.id === pedidoActualizado.id);
-    if (idx >= 0) pedidos[idx] = { ...pedidos[idx], ...pedidoActualizado };
+    if (idx >= 0) {
+      // Si cambiaron los productos del pedido (se agregó o canceló algo), avisa con sonido
+      const itemsAntes = JSON.stringify((pedidos[idx].items || []).map((i) => [i.id, i.cancelado]));
+      const itemsDespues = JSON.stringify((pedidoActualizado.items || []).map((i) => [i.id, i.cancelado]));
+      pedidos[idx] = { ...pedidos[idx], ...pedidoActualizado };
+      if (itemsAntes !== itemsDespues) sonarAviso();
+    }
   }
   render();
 });
