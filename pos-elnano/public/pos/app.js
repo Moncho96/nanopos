@@ -402,7 +402,7 @@ let pedidoEnCobro = null;
 
 function abrirModalCobro(pedidoId) {
   pedidoEnCobro = pedidosCobro.find((p) => p.id === pedidoId);
-  pagosEnCurso = [{ metodo: 'efectivo', monto: Number(pedidoEnCobro.total).toFixed(2), recibido: '' }];
+  pagosEnCurso = [{ metodo: 'efectivo', monto: Number(pedidoEnCobro.total).toFixed(2) }];
   renderModalCobro();
 }
 
@@ -426,35 +426,41 @@ function renderModalCobro() {
   }
 
   const total = Number(pedidoEnCobro.total);
-  const asignado = pagosEnCurso.reduce((sum, p) => sum + (Number(p.monto) || 0), 0);
+
+  // Calcula, en orden, cuánto de lo escrito en cada fila realmente se aplica al total
+  // (el resto, si es efectivo, se vuelve cambio) — así nunca se puede "pasar" del total.
+  let restanteAcumulado = total;
+  const filasCalculadas = pagosEnCurso.map((p) => {
+    const entrada = Number(p.monto) || 0;
+    const aplicado = Math.min(entrada, Math.max(restanteAcumulado, 0));
+    const cambio = p.metodo === 'efectivo' ? Number((entrada - aplicado).toFixed(2)) : 0;
+    restanteAcumulado = Number((restanteAcumulado - aplicado).toFixed(2));
+    return { ...p, aplicado, cambio };
+  });
+
+  const asignado = filasCalculadas.reduce((sum, f) => sum + f.aplicado, 0);
   const restante = Number((total - asignado).toFixed(2));
   const completo = Math.abs(restante) < 0.01;
 
-  const filas = pagosEnCurso
+  const filas = filasCalculadas
     .map(
       (p, i) => `
     <div style="border:1px solid #ddd;border-radius:8px;padding:10px;margin-bottom:8px">
-      <div style="display:flex;gap:8px;margin-bottom:8px">
+      <div style="display:flex;gap:8px;margin-bottom:4px">
         <select data-idx="${i}" class="pago-metodo" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd">
           <option value="efectivo" ${p.metodo === 'efectivo' ? 'selected' : ''}>💵 Efectivo</option>
           <option value="tarjeta" ${p.metodo === 'tarjeta' ? 'selected' : ''}>💳 Tarjeta</option>
           <option value="transferencia" ${p.metodo === 'transferencia' ? 'selected' : ''}>📱 Transferencia</option>
         </select>
-        <input type="text" inputmode="decimal" data-idx="${i}" class="pago-monto" value="${p.monto}" style="width:100px;padding:8px;border-radius:6px;border:1px solid #ddd" />
+        <input type="text" inputmode="decimal" data-idx="${i}" class="pago-monto" value="${p.monto}" style="width:110px;padding:8px;border-radius:6px;border:1px solid #ddd" />
         ${pagosEnCurso.length > 1 ? `<button data-idx="${i}" class="pago-quitar" style="border:none;background:none;color:#b8232f;font-size:18px">×</button>` : ''}
       </div>
+      <div style="font-size:12px;color:#888">
+        ${p.metodo === 'efectivo' ? '¿Cuánto te dio el cliente?' : 'Monto a cobrar por este método'}
+      </div>
       ${
-        p.metodo === 'efectivo'
-          ? `
-        <div style="display:flex;gap:8px;align-items:center;font-size:13px">
-          <label style="flex:1">Recibió del cliente:</label>
-          <input type="text" inputmode="decimal" data-idx="${i}" class="pago-recibido" value="${p.recibido}" placeholder="$" style="width:100px;padding:6px;border-radius:6px;border:1px solid #ddd" />
-        </div>
-        ${
-          p.recibido && Number(p.recibido) >= Number(p.monto)
-            ? `<div style="text-align:right;margin-top:4px;font-weight:bold;color:#1a7d3a">Cambio: $${(Number(p.recibido) - Number(p.monto)).toFixed(2)}</div>`
-            : ''
-        }`
+        p.cambio > 0
+          ? `<div style="text-align:right;margin-top:4px;font-weight:bold;color:#1a7d3a">Cambio a dar: $${p.cambio.toFixed(2)}</div>`
           : ''
       }
     </div>`
@@ -469,7 +475,7 @@ function renderModalCobro() {
         ${filas}
         <button id="btn-dividir" class="btn-cancelar-modal" style="border:1px dashed #ccc;border-radius:8px;color:#555;margin-bottom:10px">+ Dividir con otro método</button>
         <div style="text-align:right;font-size:14px;margin-bottom:12px;color:${completo ? '#1a7d3a' : '#b8232f'}">
-          ${completo ? '✅ Cubre el total' : restante > 0 ? `Faltan $${restante.toFixed(2)}` : `Sobran $${Math.abs(restante).toFixed(2)}`}
+          ${completo ? '✅ Cubre el total' : `Faltan $${restante.toFixed(2)}`}
         </div>
         <button class="btn-agregar" id="btn-confirmar-cobro" style="width:100%;padding:14px;border-radius:8px;border:none;font-weight:bold" ${!completo ? 'disabled' : ''}>
           Confirmar cobro
@@ -497,13 +503,6 @@ function renderModalCobro() {
       renderModalCobro();
     });
   });
-  document.querySelectorAll('.pago-recibido').forEach((el) => {
-    el.addEventListener('input', () => {
-      el.value = el.value.replace(/[^0-9.]/g, '');
-      pagosEnCurso[Number(el.dataset.idx)].recibido = el.value;
-      renderModalCobro();
-    });
-  });
   document.querySelectorAll('.pago-quitar').forEach((el) => {
     el.addEventListener('click', () => {
       pagosEnCurso.splice(Number(el.dataset.idx), 1);
@@ -513,13 +512,19 @@ function renderModalCobro() {
   const btnDividir = document.getElementById('btn-dividir');
   if (btnDividir) {
     btnDividir.addEventListener('click', () => {
-      pagosEnCurso.push({ metodo: 'tarjeta', monto: restante > 0 ? restante.toFixed(2) : '0.00', recibido: '' });
+      const restanteParaNuevaFila = filasCalculadas.length
+        ? Number((total - asignado).toFixed(2))
+        : total;
+      pagosEnCurso.push({
+        metodo: 'tarjeta',
+        monto: restanteParaNuevaFila > 0 ? restanteParaNuevaFila.toFixed(2) : '0.00',
+      });
       renderModalCobro();
     });
   }
   const btnConfirmar = document.getElementById('btn-confirmar-cobro');
   if (btnConfirmar && !btnConfirmar.disabled) {
-    btnConfirmar.addEventListener('click', confirmarCobro);
+    btnConfirmar.addEventListener('click', () => confirmarCobro(filasCalculadas));
   }
 
   // Devuelve el foco (y la posición del cursor) al campo donde estabas escribiendo
@@ -538,11 +543,11 @@ function cerrarModalCobro() {
   pagosEnCurso = [];
 }
 
-async function confirmarCobro() {
-  const pagos = pagosEnCurso.map((p) => ({
+async function confirmarCobro(filasCalculadas) {
+  const pagos = filasCalculadas.map((p) => ({
     metodo: p.metodo,
-    monto: Number(p.monto),
-    recibido: p.metodo === 'efectivo' && p.recibido ? Number(p.recibido) : null,
+    monto: p.aplicado,
+    recibido: p.metodo === 'efectivo' ? Number(p.monto) || 0 : null,
   }));
 
   const btn = document.getElementById('btn-confirmar-cobro');
