@@ -28,6 +28,45 @@ io.on('connection', (socket) => {
   });
 });
 
+// ---------- Auxiliares ----------
+async function obtenerPedidoCompleto(pedidoId) {
+  const { rows } = await pool.query(
+    `SELECT p.*, c.telefono AS cliente_telefono
+     FROM pedidos p LEFT JOIN clientes c ON c.id = p.cliente_id
+     WHERE p.id = $1`,
+    [pedidoId]
+  );
+  const pedido = rows[0];
+  if (!pedido) return null;
+
+  const { rows: items } = await pool.query(
+    `SELECT pi.*, pr.nombre AS producto_nombre, pr.estacion
+     FROM pedido_items pi
+     JOIN productos pr ON pr.id = pi.producto_id
+     WHERE pi.pedido_id = $1
+     ORDER BY pi.id`,
+    [pedidoId]
+  );
+  pedido.items = items;
+
+  const { rows: pagos } = await pool.query('SELECT * FROM pagos WHERE pedido_id = $1 ORDER BY id', [pedidoId]);
+  pedido.pagos = pagos;
+
+  return pedido;
+}
+
+async function recalcularTotalPedido(pedidoId) {
+  const { rows: sumaRows } = await pool.query(
+    `SELECT COALESCE(SUM(cantidad * precio_unitario), 0) AS suma FROM pedido_items WHERE pedido_id = $1`,
+    [pedidoId]
+  );
+  const { rows: pedRows } = await pool.query('SELECT costo_envio FROM pedidos WHERE id = $1', [pedidoId]);
+  const costoEnvio = Number(pedRows[0]?.costo_envio || 0);
+  const total = Number(sumaRows[0].suma) + costoEnvio;
+  await pool.query('UPDATE pedidos SET total = $1 WHERE id = $2', [total, pedidoId]);
+  return total;
+}
+
 // ---------- Sucursales ----------
 app.get('/api/sucursales', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM sucursales WHERE activa = true ORDER BY id');
@@ -102,20 +141,24 @@ app.post('/api/clientes', async (req, res) => {
 
 // ---------- Pedidos ----------
 app.post('/api/pedidos', async (req, res) => {
-  const { sucursal_id, cliente_id, tipo, notas, items } = req.body;
+  const { sucursal_id, cliente_id, cliente_nombre, tipo, notas, items, costo_envio } = req.body;
   if (!sucursal_id || !items || !items.length) {
     return res.status(400).json({ error: 'Falta sucursal_id o items' });
+  }
+  if (!cliente_nombre || !cliente_nombre.trim()) {
+    return res.status(400).json({ error: 'El nombre del cliente es obligatorio' });
   }
 
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const total = items.reduce((sum, it) => sum + it.cantidad * it.precio_unitario, 0);
+    const costoEnvio = Number(costo_envio) || 0;
+    const total = items.reduce((sum, it) => sum + it.cantidad * it.precio_unitario, 0) + costoEnvio;
 
     const pedidoRes = await client.query(
-      `INSERT INTO pedidos (sucursal_id, cliente_id, tipo, notas, total)
-       VALUES ($1,$2,$3,$4,$5) RETURNING *`,
-      [sucursal_id, cliente_id || null, tipo || 'mesa', notas || null, total]
+      `INSERT INTO pedidos (sucursal_id, cliente_id, cliente_nombre, tipo, notas, total, costo_envio)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [sucursal_id, cliente_id || null, cliente_nombre.trim(), tipo || 'mesa', notas || null, total, costoEnvio]
     );
     const pedido = pedidoRes.rows[0];
 
@@ -166,7 +209,7 @@ app.post('/api/pedidos', async (req, res) => {
 app.get('/api/pedidos', async (req, res) => {
   const { sucursal_id, estado, pagado } = req.query;
   let query = `
-    SELECT p.*, c.nombre AS cliente_nombre, c.telefono AS cliente_telefono
+    SELECT p.*, c.telefono AS cliente_telefono
     FROM pedidos p
     LEFT JOIN clientes c ON c.id = p.cliente_id
     WHERE 1=1`;
@@ -237,6 +280,54 @@ app.patch('/api/pedido_items/:id/estado', async (req, res) => {
   res.json(item);
 });
 
+app.get('/api/pedidos/:id', async (req, res) => {
+  const pedido = await obtenerPedidoCompleto(req.params.id);
+  if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+  res.json(pedido);
+});
+
+// Agrega un producto a un pedido que ya existe (para editar antes de cobrar)
+app.post('/api/pedidos/:id/items', async (req, res) => {
+  const { id } = req.params;
+  const { producto_id, cantidad, precio_unitario, opciones_seleccionadas, notas } = req.body;
+  if (!producto_id || !cantidad || !precio_unitario) {
+    return res.status(400).json({ error: 'Faltan datos del producto' });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, notas, opciones_seleccionadas)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [id, producto_id, cantidad, precio_unitario, notas || null, JSON.stringify(opciones_seleccionadas || [])]
+    );
+    await recalcularTotalPedido(id);
+    const pedidoCompleto = await obtenerPedidoCompleto(id);
+    io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
+    res.json(pedidoCompleto);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'No se pudo agregar el producto' });
+  }
+});
+
+// Quita un producto de un pedido existente
+app.delete('/api/pedido_items/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { rows } = await pool.query('SELECT pedido_id FROM pedido_items WHERE id = $1', [id]);
+    if (!rows.length) return res.status(404).json({ error: 'Producto no encontrado en el pedido' });
+    const pedidoId = rows[0].pedido_id;
+
+    await pool.query('DELETE FROM pedido_items WHERE id = $1', [id]);
+    await recalcularTotalPedido(pedidoId);
+    const pedidoCompleto = await obtenerPedidoCompleto(pedidoId);
+    io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
+    res.json(pedidoCompleto);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'No se pudo quitar el producto' });
+  }
+});
+
 app.post('/api/pedidos/:id/pagos', async (req, res) => {
   const { id } = req.params;
   const { pagos } = req.body; // [{ metodo, monto, recibido }]
@@ -300,6 +391,138 @@ app.post('/api/pedidos/:id/pagos', async (req, res) => {
   } finally {
     client.release();
   }
+});
+
+// ---------- Gastos ----------
+app.post('/api/gastos', async (req, res) => {
+  const { sucursal_id, descripcion, monto, metodo_pago } = req.body;
+  if (!sucursal_id || !descripcion || !monto || !metodo_pago) {
+    return res.status(400).json({ error: 'Faltan datos del gasto' });
+  }
+  if (!['efectivo', 'tarjeta', 'transferencia'].includes(metodo_pago)) {
+    return res.status(400).json({ error: 'Método de pago inválido' });
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO gastos (sucursal_id, descripcion, monto, metodo_pago) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [sucursal_id, descripcion, monto, metodo_pago]
+  );
+  res.json(rows[0]);
+});
+
+app.get('/api/gastos', async (req, res) => {
+  const { sucursal_id, fecha } = req.query;
+  let query = 'SELECT * FROM gastos WHERE 1=1';
+  const params = [];
+  if (sucursal_id) {
+    params.push(sucursal_id);
+    query += ` AND sucursal_id = $${params.length}`;
+  }
+  if (fecha) {
+    params.push(fecha);
+    query += ` AND creado_en::date = $${params.length}`;
+  }
+  query += ' ORDER BY creado_en DESC';
+  const { rows } = await pool.query(query, params);
+  res.json(rows);
+});
+
+app.delete('/api/gastos/:id', async (req, res) => {
+  await pool.query('DELETE FROM gastos WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// ---------- Corte de caja ----------
+app.get('/api/corte', async (req, res) => {
+  const { sucursal_id, fecha } = req.query;
+  if (!sucursal_id || !fecha) {
+    return res.status(400).json({ error: 'Falta sucursal_id o fecha' });
+  }
+
+  const { rows: ventas } = await pool.query(
+    `SELECT pg.metodo, SUM(pg.monto) AS total
+     FROM pagos pg
+     JOIN pedidos p ON p.id = pg.pedido_id
+     WHERE p.sucursal_id = $1 AND pg.creado_en::date = $2
+     GROUP BY pg.metodo`,
+    [sucursal_id, fecha]
+  );
+
+  const { rows: gastos } = await pool.query(
+    `SELECT metodo_pago AS metodo, SUM(monto) AS total
+     FROM gastos
+     WHERE sucursal_id = $1 AND creado_en::date = $2
+     GROUP BY metodo_pago`,
+    [sucursal_id, fecha]
+  );
+
+  const { rows: pedidosCount } = await pool.query(
+    `SELECT COUNT(*) AS cantidad FROM pedidos WHERE sucursal_id = $1 AND creado_en::date = $2 AND pagado = true`,
+    [sucursal_id, fecha]
+  );
+
+  const metodos = ['efectivo', 'tarjeta', 'transferencia'];
+  const resumen = metodos.map((m) => {
+    const venta = Number(ventas.find((v) => v.metodo === m)?.total || 0);
+    const gasto = Number(gastos.find((g) => g.metodo === m)?.total || 0);
+    return { metodo: m, ventas: venta, gastos: gasto, neto: Number((venta - gasto).toFixed(2)) };
+  });
+
+  const totalVentas = resumen.reduce((s, r) => s + r.ventas, 0);
+  const totalGastos = resumen.reduce((s, r) => s + r.gastos, 0);
+  const totalNeto = resumen.reduce((s, r) => s + r.neto, 0);
+
+  res.json({
+    fecha,
+    sucursal_id: Number(sucursal_id),
+    pedidosCobrados: Number(pedidosCount[0].cantidad),
+    resumen,
+    totalVentas,
+    totalGastos,
+    totalNeto,
+  });
+});
+
+// ---------- Costos de envío por colonia ----------
+app.get('/api/envios', async (req, res) => {
+  const { sucursal_id } = req.query;
+  const { rows } = await pool.query(
+    'SELECT * FROM costos_envio WHERE sucursal_id = $1 ORDER BY colonia',
+    [sucursal_id]
+  );
+  res.json(rows);
+});
+
+app.post('/api/envios', async (req, res) => {
+  const { sucursal_id, colonia, costo } = req.body;
+  if (!sucursal_id || !colonia || costo === undefined) {
+    return res.status(400).json({ error: 'Faltan datos' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO costos_envio (sucursal_id, colonia, costo) VALUES ($1,$2,$3)
+       ON CONFLICT (sucursal_id, colonia) DO UPDATE SET costo = EXCLUDED.costo
+       RETURNING *`,
+      [sucursal_id, colonia.trim(), costo]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'No se pudo guardar' });
+  }
+});
+
+app.patch('/api/envios/:id', async (req, res) => {
+  const { costo } = req.body;
+  const { rows } = await pool.query(
+    'UPDATE costos_envio SET costo = $1 WHERE id = $2 RETURNING *',
+    [costo, req.params.id]
+  );
+  res.json(rows[0]);
+});
+
+app.delete('/api/envios/:id', async (req, res) => {
+  await pool.query('DELETE FROM costos_envio WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
 });
 
 // ---------- Planeación de compras con Claude ----------
