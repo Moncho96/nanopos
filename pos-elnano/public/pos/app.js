@@ -680,11 +680,18 @@ function abrirModalModificadores(producto, grupos, onAgregar) {
       const opcionesElegidas = [];
       grupos.forEach((g) => {
         if (g.tipo === 'variante' && seleccion[g.id]) {
-          opcionesElegidas.push({ grupo: g.nombre, nombre: seleccion[g.id].nombre, precio: Number(seleccion[g.id].precio), tipo: 'variante' });
+          opcionesElegidas.push({
+            id: seleccion[g.id].id,
+            grupo: g.nombre,
+            nombre: seleccion[g.id].nombre,
+            precio: Number(seleccion[g.id].precio),
+            tipo: 'variante',
+            multiplicador: Number(seleccion[g.id].multiplicador) || 1,
+          });
         }
         if (g.tipo === 'extra') {
           seleccion[g.id].forEach((op) => {
-            opcionesElegidas.push({ grupo: g.nombre, nombre: op.nombre, precio: Number(op.precio), tipo: 'extra' });
+            opcionesElegidas.push({ id: op.id, grupo: g.nombre, nombre: op.nombre, precio: Number(op.precio), tipo: 'extra' });
           });
         }
       });
@@ -1339,11 +1346,39 @@ async function abrirModalReceta(productoId) {
 }
 
 function renderModalReceta(producto, receta) {
+  const grupos = producto.grupos_modificadores || [];
+  const gruposHtml = grupos.length
+    ? grupos
+        .map(
+          (g) => `
+      <div class="modal-grupo">
+        <div class="modal-grupo-titulo">${g.nombre} ${g.tipo === 'variante' ? '(variante — # = a cuántas piezas equivale)' : '(extra)'}</div>
+        ${g.opciones
+          .map(
+            (op) => `
+          <div class="editar-item-row">
+            <span>${op.nombre}</span>
+            <span style="display:flex;align-items:center;gap:6px">
+              ${
+                g.tipo === 'variante'
+                  ? `<input type="text" inputmode="decimal" class="opcion-multiplicador" data-opcion-id="${op.id}" value="${op.multiplicador ?? 1}" style="width:46px;padding:5px;border-radius:6px;border:1px solid #ddd;text-align:center" />`
+                  : ''
+              }
+              <button class="btn-eliminar-fila btn-insumos-opcion" data-opcion-id="${op.id}">🧪 Insumos</button>
+            </span>
+          </div>`
+          )
+          .join('')}
+      </div>`
+        )
+        .join('')
+    : '';
+
   const html = `
     <div class="modal-overlay" id="modal-overlay-receta">
       <div class="modal-box">
         <h3>Receta — ${producto.nombre}</h3>
-        <div style="font-size:12px;color:#888;margin-bottom:10px">Cantidad de cada insumo que se gasta al vender 1 unidad</div>
+        <div style="font-size:12px;color:#888;margin-bottom:10px">Insumos que se gastan al vender <strong>1 pieza/unidad base</strong> (si el producto tiene variantes tipo "Orden", multiplícalo abajo, no aquí)</div>
         <div id="receta-items">
           ${
             receta
@@ -1358,7 +1393,7 @@ function renderModalReceta(producto, receta) {
           }
         </div>
         <div class="modal-grupo">
-          <div class="modal-grupo-titulo">Agregar insumo</div>
+          <div class="modal-grupo-titulo">Agregar insumo a la receta base</div>
           <div style="display:flex;gap:8px">
             <select id="receta-insumo-select" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd">
               ${insumosCatalogoCache.map((i) => `<option value="${i.id}">${i.nombre} (${i.unidad})</option>`).join('')}
@@ -1367,6 +1402,7 @@ function renderModalReceta(producto, receta) {
           </div>
           <button class="btn-agregar" id="btn-agregar-insumo-receta" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:none">+ Agregar a la receta</button>
         </div>
+        ${gruposHtml}
         <button class="btn-cancelar-modal" id="btn-cerrar-receta">Cerrar</button>
       </div>
     </div>`;
@@ -1402,6 +1438,105 @@ function renderModalReceta(producto, receta) {
     });
     const recetaNueva = await fetch(`/api/productos/${producto.id}/receta`).then((r) => r.json());
     renderModalReceta(producto, recetaNueva);
+  });
+
+  document.querySelectorAll('.opcion-multiplicador').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
+    });
+    el.addEventListener('change', async () => {
+      await fetch(`/api/opciones/${el.dataset.opcionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ multiplicador: el.value || 1 }),
+      });
+      const g = grupos.find((gr) => gr.opciones.some((o) => o.id === Number(el.dataset.opcionId)));
+      const op = g.opciones.find((o) => o.id === Number(el.dataset.opcionId));
+      op.multiplicador = Number(el.value) || 1;
+    });
+  });
+  document.querySelectorAll('.btn-insumos-opcion').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const opcionId = Number(btn.dataset.opcionId);
+      let opcion = null;
+      grupos.forEach((g) => {
+        const encontrada = g.opciones.find((o) => o.id === opcionId);
+        if (encontrada) opcion = encontrada;
+      });
+      abrirModalInsumosOpcion(producto, opcion);
+    });
+  });
+}
+
+// ---------- Insumos extra por opción de variante/extra ----------
+
+async function abrirModalInsumosOpcion(producto, opcion) {
+  const insumosOpcion = await fetch(`/api/opciones/${opcion.id}/insumos`).then((r) => r.json());
+  renderModalInsumosOpcion(producto, opcion, insumosOpcion);
+}
+
+function renderModalInsumosOpcion(producto, opcion, insumosOpcion) {
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-insumos-opcion">
+      <div class="modal-box">
+        <h3>Insumos extra — ${opcion.nombre}</h3>
+        <div style="font-size:12px;color:#888;margin-bottom:10px">Se suman aparte de la receta base cuando eligen esta opción</div>
+        <div id="insumos-opcion-items">
+          ${
+            insumosOpcion
+              .map(
+                (r) => `
+            <div class="editar-item-row">
+              <span>${r.insumo_nombre} — ${Number(r.cantidad)} ${r.unidad}</span>
+              <button data-insumo-id="${r.insumo_id}">×</button>
+            </div>`
+              )
+              .join('') || '<p style="color:#999;font-size:13px">Sin insumos extra para esta opción</p>'
+          }
+        </div>
+        <div class="modal-grupo">
+          <div class="modal-grupo-titulo">Agregar insumo extra</div>
+          <div style="display:flex;gap:8px">
+            <select id="insumo-opcion-select" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd">
+              ${insumosCatalogoCache.map((i) => `<option value="${i.id}">${i.nombre} (${i.unidad})</option>`).join('')}
+            </select>
+            <input type="text" inputmode="decimal" id="insumo-opcion-cantidad" placeholder="Cantidad" style="width:90px;padding:8px;border-radius:6px;border:1px solid #ddd" />
+          </div>
+          <button class="btn-agregar" id="btn-agregar-insumo-opcion" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:none">+ Agregar</button>
+        </div>
+        <button class="btn-cancelar-modal" id="btn-volver-receta">← Volver a la receta</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  document.getElementById('modal-overlay-insumos-opcion').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-insumos-opcion') document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-volver-receta').addEventListener('click', () => abrirModalReceta(producto.id));
+  document.getElementById('insumo-opcion-cantidad').addEventListener('input', (e) => {
+    e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+  });
+  document.querySelectorAll('#insumos-opcion-items button[data-insumo-id]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/opciones/${opcion.id}/insumos/${btn.dataset.insumoId}`, { method: 'DELETE' });
+      const nueva = await fetch(`/api/opciones/${opcion.id}/insumos`).then((r) => r.json());
+      renderModalInsumosOpcion(producto, opcion, nueva);
+    });
+  });
+  document.getElementById('btn-agregar-insumo-opcion').addEventListener('click', async () => {
+    const insumo_id = document.getElementById('insumo-opcion-select').value;
+    const cantidad = document.getElementById('insumo-opcion-cantidad').value;
+    if (!insumo_id || !cantidad) {
+      alert('Falta elegir el insumo o la cantidad');
+      return;
+    }
+    await fetch(`/api/opciones/${opcion.id}/insumos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ insumo_id, cantidad }),
+    });
+    const nueva = await fetch(`/api/opciones/${opcion.id}/insumos`).then((r) => r.json());
+    renderModalInsumosOpcion(producto, opcion, nueva);
   });
 }
 
