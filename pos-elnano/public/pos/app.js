@@ -871,6 +871,12 @@ document.getElementById('btn-menu').addEventListener('click', () => document.get
 document.getElementById('drawer-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'drawer-overlay') document.getElementById('drawer-overlay').classList.remove('abierto');
 });
+document.getElementById('btn-abrir-compras').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-compras').classList.add('abierto');
+});
+document.getElementById('btn-cerrar-compras').addEventListener('click', () => document.getElementById('overlay-compras').classList.remove('abierto'));
+
 document.getElementById('btn-abrir-menu-admin').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-menu-admin').classList.add('abierto');
@@ -1118,6 +1124,70 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== PLANEACIÓN DE COMPRAS ====================
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+document.getElementById('btn-generar-compras').addEventListener('click', generarPlanCompras);
+
+async function generarPlanCompras() {
+  const sucursal_id = document.getElementById('sucursal-select').value;
+  const dias = document.getElementById('compras-dias').value || 7;
+  const cont = document.getElementById('compras-resultado');
+  const btn = document.getElementById('btn-generar-compras');
+
+  btn.disabled = true;
+  btn.textContent = 'Pensando...';
+  cont.innerHTML = '<p style="text-align:center;padding:30px;color:#888">Analizando consumo e inventario, un momento...</p>';
+
+  try {
+    const resp = await fetch('/api/plan-compras', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sucursal_id, dias }),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      cont.innerHTML = `<p style="color:#b8232f;padding:0 12px">${escapeHtml(data.error || 'No se pudo generar la sugerencia')}</p>`;
+      return;
+    }
+
+    const tablaHtml = data.resumen.length
+      ? `<table class="tabla-simple">
+          <thead><tr><th>Insumo</th><th class="num">Consumo (${dias} días)</th><th class="num">Stock actual</th></tr></thead>
+          <tbody>
+            ${data.resumen
+              .map(
+                (r) => `
+              <tr>
+                <td>${escapeHtml(r.nombre)}</td>
+                <td class="num">${Number(r.consumo).toFixed(2)} ${escapeHtml(r.unidad)}</td>
+                <td class="num">${Number(r.stock_actual).toFixed(2)} ${escapeHtml(r.unidad)}</td>
+              </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>`
+      : '';
+
+    cont.innerHTML = `
+      ${tablaHtml}
+      <div style="background:white;margin:0 12px 16px;padding:16px;border-radius:10px;white-space:pre-wrap;font-size:14px;line-height:1.6">
+        <strong>Sugerencia de Claude:</strong><br><br>${escapeHtml(data.sugerencia)}
+      </div>`;
+  } catch (err) {
+    cont.innerHTML = '<p style="color:#b8232f;padding:0 12px">No se pudo conectar. Revisa tu internet e intenta otra vez.</p>';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🧠 Generar sugerencia';
+  }
+}
 
 // ==================== MENÚ: PRODUCTOS E INSUMOS ====================
 

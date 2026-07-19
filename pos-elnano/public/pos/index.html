@@ -260,11 +260,27 @@
 <div class="drawer-overlay" id="drawer-overlay">
   <div class="drawer">
     <h3>Menú</h3>
+    <button class="item" id="btn-abrir-compras">🛒 Planeación de compras</button>
     <button class="item" id="btn-abrir-menu-admin">🍽️ Menú (productos e insumos)</button>
     <button class="item" id="btn-abrir-historial">🕓 Historial de pedidos</button>
     <button class="item" id="btn-abrir-corte">📊 Corte de caja</button>
     <button class="item" id="btn-abrir-envios">🚚 Envíos por colonia</button>
   </div>
+</div>
+
+<!-- Planeación de compras -->
+<div class="full-overlay" id="overlay-compras">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-compras">✕</button>
+    <span class="titulo">Planeación de compras</span>
+  </div>
+  <div class="form-inline">
+    <label style="width:100%;font-size:13px;color:#666">Considerar el consumo de los últimos:</label>
+    <input type="number" id="compras-dias" value="7" min="1" max="60" style="width:70px" />
+    <span style="align-self:center;font-size:14px;color:#666">días</span>
+    <button id="btn-generar-compras">🧠 Generar sugerencia</button>
+  </div>
+  <div id="compras-resultado"></div>
 </div>
 
 <!-- Menú: productos e insumos -->
