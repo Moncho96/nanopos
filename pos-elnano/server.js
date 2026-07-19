@@ -833,37 +833,58 @@ app.post('/api/plan-compras', async (req, res) => {
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(400).json({ error: 'Falta configurar ANTHROPIC_API_KEY en el .env' });
   }
+  if (!sucursal_id) {
+    return res.status(400).json({ error: 'Falta sucursal_id' });
+  }
   try {
-    const { rows } = await pool.query(
-      `SELECT pr.nombre, SUM(pi.cantidad) AS total_vendido
-       FROM pedido_items pi
-       JOIN pedidos p ON p.id = pi.pedido_id
-       JOIN productos pr ON pr.id = pi.producto_id
-       WHERE p.sucursal_id = $1 AND p.creado_en >= now() - ($2 || ' days')::interval
-       GROUP BY pr.nombre
-       ORDER BY total_vendido DESC`,
+    // Consumo real de cada insumo (según las recetas) en los últimos `dias`,
+    // sin contar productos ni pedidos cancelados, más el stock actual en esa sucursal.
+    const { rows: consumo } = await pool.query(
+      `SELECT i.id, i.nombre, i.unidad, i.costo_unitario,
+              COALESCE(SUM(pri.cantidad * pi.cantidad), 0) AS consumo,
+              COALESCE(s.stock_actual, 0) AS stock_actual
+       FROM insumos i
+       LEFT JOIN producto_insumos pri ON pri.insumo_id = i.id
+       LEFT JOIN pedido_items pi ON pi.producto_id = pri.producto_id AND pi.cancelado = false
+         AND pi.pedido_id IN (
+           SELECT id FROM pedidos
+           WHERE sucursal_id = $1 AND cancelado = false
+             AND creado_en >= now() - ($2 || ' days')::interval
+         )
+       LEFT JOIN inventario_stock s ON s.insumo_id = i.id AND s.sucursal_id = $1
+       GROUP BY i.id, i.nombre, i.unidad, i.costo_unitario, s.stock_actual
+       ORDER BY i.nombre`,
       [sucursal_id, dias]
     );
 
-    if (!rows.length) {
-      return res.json({ resumen: [], sugerencia: 'No hay ventas registradas en ese periodo todavía.' });
+    if (!consumo.length) {
+      return res.json({
+        resumen: [],
+        sugerencia:
+          'Todavía no hay insumos registrados. Ve a Menú → Insumos para darlos de alta, y asígnales receta a tus productos (botón 📋) para que esto funcione.',
+      });
     }
 
-    const resumen = rows.map((r) => `${r.nombre}: ${r.total_vendido} unidades vendidas`).join('\n');
+    const resumenTexto = consumo
+      .map(
+        (c) =>
+          `${c.nombre}: consumo de los últimos ${dias} días = ${Number(c.consumo).toFixed(2)} ${c.unidad}, stock actual = ${Number(c.stock_actual).toFixed(2)} ${c.unidad}, costo aprox. $${Number(c.costo_unitario).toFixed(2)} por ${c.unidad}`
+      )
+      .join('\n');
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const msg = await anthropic.messages.create({
       model: 'claude-sonnet-5',
-      max_tokens: 1000,
+      max_tokens: 1200,
       messages: [
         {
           role: 'user',
-          content: `Eres un asistente de planeación de compras para una taquería en México. Estas son las ventas por producto de los últimos ${dias} días:\n\n${resumen}\n\nSugiere cantidades de compra de insumos para la próxima semana, con un margen de seguridad razonable (10-15%) para no quedarse sin producto pero sin sobre-comprar perecederos. Responde breve, en formato de lista, en español.`,
+          content: `Eres un asistente de compras para una taquería en México. Este es el consumo real de insumos (calculado con las recetas de cada producto) de los últimos ${dias} días, y el stock actual en bodega:\n\n${resumenTexto}\n\nPara cada insumo, sugiere cuánto comprar para cubrir aproximadamente los próximos ${dias} días, considerando el stock que ya hay (no sugieras comprar si ya alcanza y sobra) y un margen de seguridad de 10-15%. Al final, haz un resumen breve de qué insumos son prioritarios (los que se van a acabar más pronto). Responde en español, en formato de lista breve.`,
         },
       ],
     });
 
-    res.json({ resumen: rows, sugerencia: msg.content[0].text });
+    res.json({ resumen: consumo, sugerencia: msg.content[0].text });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'No se pudo generar la sugerencia de compras' });
