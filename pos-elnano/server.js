@@ -470,7 +470,10 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, sin explicaciones
     res.json({ proveedor: datos.proveedor, fecha: datos.fecha, total: datos.total, items });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'No se pudo leer el ticket. Intenta con una foto más clara y derecha, o captura los productos a mano.' });
+    res.status(500).json({
+      error: 'No se pudo leer el ticket. Intenta con una foto más clara y derecha, o captura los productos a mano.',
+      detalle: err.message,
+    });
   }
 });
 
