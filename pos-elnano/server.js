@@ -726,10 +726,17 @@ app.post('/api/pedidos', async (req, res) => {
     const costoEnvio = Number(costo_envio) || 0;
     const total = items.reduce((sum, it) => sum + it.cantidad * it.precio_unitario, 0) + costoEnvio;
 
+    const { rows: contadorRows } = await client.query(
+      `SELECT COUNT(*)::int AS n FROM pedidos
+       WHERE sucursal_id = $1 AND ${fechaNegocioSQL('creado_en')} = ${fechaNegocioSQL('now()')}`,
+      [sucursal_id]
+    );
+    const numeroDia = contadorRows[0].n + 1;
+
     const pedidoRes = await client.query(
-      `INSERT INTO pedidos (sucursal_id, cliente_id, cliente_nombre, tipo, notas, total, costo_envio)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [sucursal_id, cliente_id || null, cliente_nombre.trim(), tipo || 'mesa', notas || null, total, costoEnvio]
+      `INSERT INTO pedidos (sucursal_id, cliente_id, cliente_nombre, tipo, notas, total, costo_envio, numero_dia)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [sucursal_id, cliente_id || null, cliente_nombre.trim(), tipo || 'mesa', notas || null, total, costoEnvio, numeroDia]
     );
     const pedido = pedidoRes.rows[0];
 
