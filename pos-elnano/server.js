@@ -208,7 +208,7 @@ app.post('/api/pedidos', async (req, res) => {
 });
 
 app.get('/api/pedidos', async (req, res) => {
-  const { sucursal_id, estado, pagado } = req.query;
+  const { sucursal_id, estado, pagado, cancelado, fecha_desde, fecha_hasta } = req.query;
   let query = `
     SELECT p.*, c.telefono AS cliente_telefono
     FROM pedidos p
@@ -227,7 +227,19 @@ app.get('/api/pedidos', async (req, res) => {
     params.push(pagado === 'true');
     query += ` AND p.pagado = $${params.length}`;
   }
-  query += ' ORDER BY p.creado_en DESC LIMIT 100';
+  if (cancelado === 'true' || cancelado === 'false') {
+    params.push(cancelado === 'true');
+    query += ` AND p.cancelado = $${params.length}`;
+  }
+  if (fecha_desde) {
+    params.push(fecha_desde);
+    query += ` AND ${fechaNegocioSQL('p.creado_en')} >= $${params.length}`;
+  }
+  if (fecha_hasta) {
+    params.push(fecha_hasta);
+    query += ` AND ${fechaNegocioSQL('p.creado_en')} <= $${params.length}`;
+  }
+  query += ' ORDER BY p.creado_en DESC LIMIT 300';
 
   const { rows: pedidos } = await pool.query(query, params);
 
@@ -285,6 +297,19 @@ app.get('/api/pedidos/:id', async (req, res) => {
   const pedido = await obtenerPedidoCompleto(req.params.id);
   if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
   res.json(pedido);
+});
+
+// Cancela un pedido completo (esté pendiente o ya cobrado), por si se equivocan
+app.patch('/api/pedidos/:id/cancelar', async (req, res) => {
+  const { id } = req.params;
+  const { rows } = await pool.query(
+    'UPDATE pedidos SET cancelado = true, cancelado_en = now() WHERE id = $1 RETURNING *',
+    [id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
+  const pedidoCompleto = await obtenerPedidoCompleto(id);
+  io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
+  res.json(pedidoCompleto);
 });
 
 // Agrega un producto a un pedido que ya existe (para editar antes de cobrar)
@@ -421,7 +446,7 @@ app.get('/api/gastos', async (req, res) => {
   }
   if (fecha) {
     params.push(fecha);
-    query += ` AND creado_en::date = $${params.length}`;
+    query += ` AND ${fechaNegocioSQL('creado_en')} = $${params.length}`;
   }
   query += ' ORDER BY creado_en DESC';
   const { rows } = await pool.query(query, params);
@@ -433,6 +458,19 @@ app.delete('/api/gastos/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Día de negocio (zona horaria + hora de corte) ----------
+// La base de datos guarda las horas en UTC, pero el negocio opera en horario de
+// Monterrey y cierra después de medianoche (6pm a 12:30am aprox). Para que las
+// ventas de después de medianoche cuenten para el turno que ya estaba en curso
+// (no para el día calendario siguiente), el "día de negocio" empieza a las 6am
+// hora de Monterrey en vez de a medianoche.
+const ZONA_HORARIA_NEGOCIO = 'America/Monterrey';
+const CORTE_CUTOFF_HORAS = 6; // hora local (0-23) en la que empieza un nuevo día de negocio
+
+function fechaNegocioSQL(columna) {
+  return `((${columna} AT TIME ZONE 'UTC' AT TIME ZONE '${ZONA_HORARIA_NEGOCIO}') - INTERVAL '${CORTE_CUTOFF_HORAS} hours')::date`;
+}
+
 // ---------- Corte de caja ----------
 async function calcularCorte(sucursalId, fecha) {
   // Resta, proporcionalmente, el costo de envío de cada pago — ese dinero es
@@ -442,7 +480,7 @@ async function calcularCorte(sucursalId, fecha) {
             SUM(pg.monto * (1 - COALESCE(p.costo_envio, 0) / NULLIF(p.total, 0))) AS total
      FROM pagos pg
      JOIN pedidos p ON p.id = pg.pedido_id
-     WHERE p.sucursal_id = $1 AND pg.creado_en::date = $2
+     WHERE p.sucursal_id = $1 AND p.cancelado = false AND ${fechaNegocioSQL('pg.creado_en')} = $2
      GROUP BY pg.metodo`,
     [sucursalId, fecha]
   );
@@ -450,14 +488,14 @@ async function calcularCorte(sucursalId, fecha) {
   const { rows: gastos } = await pool.query(
     `SELECT metodo_pago AS metodo, SUM(monto) AS total
      FROM gastos
-     WHERE sucursal_id = $1 AND creado_en::date = $2
+     WHERE sucursal_id = $1 AND ${fechaNegocioSQL('creado_en')} = $2
      GROUP BY metodo_pago`,
     [sucursalId, fecha]
   );
 
   const { rows: pedidosCount } = await pool.query(
     `SELECT COUNT(*) AS cantidad, COALESCE(SUM(costo_envio), 0) AS total_envios
-     FROM pedidos WHERE sucursal_id = $1 AND pagado_en::date = $2 AND pagado = true`,
+     FROM pedidos WHERE sucursal_id = $1 AND ${fechaNegocioSQL('pagado_en')} = $2 AND pagado = true AND cancelado = false`,
     [sucursalId, fecha]
   );
 
