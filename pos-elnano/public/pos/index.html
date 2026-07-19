@@ -260,6 +260,7 @@
 <div class="drawer-overlay" id="drawer-overlay">
   <div class="drawer">
     <h3>Menú</h3>
+    <button class="item" id="btn-abrir-compra-registro">📷 Registrar compra</button>
     <button class="item" id="btn-abrir-importar">📥 Importar historial</button>
     <button class="item" id="btn-abrir-conteo">📦 Conteo de inventario</button>
     <button class="item" id="btn-abrir-compras">🛒 Planeación de compras</button>
@@ -283,6 +284,38 @@
     <button id="btn-generar-compras">🧠 Generar sugerencia</button>
   </div>
   <div id="compras-resultado"></div>
+</div>
+
+<!-- Registrar compra -->
+<div class="full-overlay" id="overlay-compra-registro">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-compra-registro">✕</button>
+    <span class="titulo">Registrar compra</span>
+  </div>
+
+  <div class="form-inline">
+    <input type="file" id="compra-foto" accept="image/*" capture="environment" style="flex:1" />
+    <button id="btn-leer-ticket">🧠 Leer ticket con Claude</button>
+  </div>
+  <div style="padding:0 12px"><button id="btn-compra-manual" style="background:none;border:none;color:#0056b3;font-size:13px;cursor:pointer;padding:6px 0">+ Empezar sin foto (captura manual)</button></div>
+  <div id="compra-progreso" style="padding:0 12px;font-size:13px;color:#666"></div>
+
+  <div id="compra-form-detalle" style="display:none">
+    <div class="form-inline">
+      <input type="text" id="compra-proveedor" placeholder="Proveedor (opcional)" />
+      <input type="date" id="compra-fecha" />
+    </div>
+    <table class="tabla-simple">
+      <thead><tr><th>Del ticket</th><th>Insumo</th><th class="num">Cantidad</th><th class="num">Costo unit.</th><th></th></tr></thead>
+      <tbody id="compra-items-tabla-body"></tbody>
+    </table>
+    <div style="padding:0 12px 12px"><button id="btn-agregar-fila-compra" style="background:none;border:1px dashed #ccc;border-radius:8px;padding:8px 14px;color:#555;cursor:pointer">+ Agregar fila manual</button></div>
+    <div class="resumen-total"><span>Total de la compra</span><span id="compra-total-preview">$0.00</span></div>
+    <button id="btn-guardar-compra" class="btn-nuevo-pedido" style="margin:0 12px 16px;width:calc(100% - 24px);background:#1a7d3a">Guardar compra</button>
+  </div>
+
+  <h3 style="padding:0 12px">Compras anteriores</h3>
+  <div id="historial-compras" style="padding:0 12px 24px"></div>
 </div>
 
 <!-- Importar historial -->

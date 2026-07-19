@@ -878,6 +878,13 @@ document.getElementById('btn-menu').addEventListener('click', () => document.get
 document.getElementById('drawer-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'drawer-overlay') document.getElementById('drawer-overlay').classList.remove('abierto');
 });
+document.getElementById('btn-abrir-compra-registro').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-compra-registro').classList.add('abierto');
+  cargarHistorialCompras();
+});
+document.getElementById('btn-cerrar-compra-registro').addEventListener('click', () => document.getElementById('overlay-compra-registro').classList.remove('abierto'));
+
 document.getElementById('btn-abrir-importar').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-importar').classList.add('abierto');
@@ -1144,6 +1151,213 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== REGISTRAR COMPRA (con lectura de ticket) ====================
+
+let compraItemsState = [];
+let insumosParaCompraCache = null;
+
+document.getElementById('btn-leer-ticket').addEventListener('click', leerTicketCompra);
+document.getElementById('btn-compra-manual').addEventListener('click', empezarCompraManual);
+document.getElementById('btn-agregar-fila-compra').addEventListener('click', () => {
+  compraItemsState.push({ descripcion: '', insumo_id: null, cantidad: 1, costo_unitario: 0 });
+  renderTablaCompra();
+});
+document.getElementById('btn-guardar-compra').addEventListener('click', guardarCompra);
+
+async function leerTicketCompra() {
+  const input = document.getElementById('compra-foto');
+  const progreso = document.getElementById('compra-progreso');
+  if (!input.files.length) {
+    alert('Elige o toma una foto del ticket primero');
+    return;
+  }
+
+  const btn = document.getElementById('btn-leer-ticket');
+  btn.disabled = true;
+  progreso.textContent = '🧠 Leyendo el ticket, un momento...';
+
+  try {
+    const archivo = input.files[0];
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(archivo);
+    });
+    const base64 = dataUrl.split(',')[1];
+
+    const resp = await fetch('/api/compras/leer-ticket', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imagen_base64: base64, media_type: archivo.type || 'image/jpeg' }),
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      progreso.textContent = '';
+      alert(data.error || 'No se pudo leer el ticket');
+      return;
+    }
+
+    insumosParaCompraCache = await fetch('/api/insumos').then((r) => r.json());
+
+    compraItemsState = (data.items || []).map((it) => ({
+      descripcion: it.descripcion,
+      insumo_id: it.insumo_id_sugerido,
+      cantidad: it.cantidad || 1,
+      costo_unitario: it.precio_unitario || 0,
+    }));
+
+    document.getElementById('compra-proveedor').value = data.proveedor || '';
+    document.getElementById('compra-fecha').value = data.fecha || fechaNegocioActual();
+    document.getElementById('compra-form-detalle').style.display = 'block';
+    progreso.textContent = compraItemsState.length
+      ? `Se leyeron ${compraItemsState.length} producto(s) — revisa que el insumo de cada fila esté correcto antes de guardar.`
+      : 'No se detectaron productos en la foto. Agrega las filas a mano.';
+    renderTablaCompra();
+  } catch (err) {
+    progreso.textContent = '';
+    alert('No se pudo procesar la imagen, intenta de nuevo.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function empezarCompraManual() {
+  insumosParaCompraCache = await fetch('/api/insumos').then((r) => r.json());
+  compraItemsState = [{ descripcion: '', insumo_id: null, cantidad: 1, costo_unitario: 0 }];
+  document.getElementById('compra-proveedor').value = '';
+  document.getElementById('compra-fecha').value = fechaNegocioActual();
+  document.getElementById('compra-form-detalle').style.display = 'block';
+  document.getElementById('compra-progreso').textContent = '';
+  renderTablaCompra();
+}
+
+function renderTablaCompra() {
+  document.getElementById('compra-items-tabla-body').innerHTML = compraItemsState
+    .map(
+      (it, i) => `
+    <tr>
+      <td style="font-size:12px;color:#888;max-width:120px">${escapeHtml(it.descripcion || '')}</td>
+      <td>
+        <select class="compra-insumo-select" data-idx="${i}" style="padding:6px;border-radius:6px;border:1px solid #ddd">
+          <option value="">Selecciona...</option>
+          ${insumosParaCompraCache
+            .map((ins) => `<option value="${ins.id}" ${ins.id === it.insumo_id ? 'selected' : ''}>${ins.nombre} (${ins.unidad})</option>`)
+            .join('')}
+        </select>
+      </td>
+      <td class="num"><input type="text" inputmode="decimal" class="compra-cantidad" data-idx="${i}" value="${it.cantidad}" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+      <td class="num"><input type="text" inputmode="decimal" class="compra-costo" data-idx="${i}" value="${it.costo_unitario}" style="width:80px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+      <td><button class="btn-eliminar-fila" data-quitar="${i}">🗑️</button></td>
+    </tr>`
+    )
+    .join('');
+
+  document.querySelectorAll('.compra-insumo-select').forEach((el) => {
+    el.addEventListener('change', () => {
+      compraItemsState[Number(el.dataset.idx)].insumo_id = el.value ? Number(el.value) : null;
+    });
+  });
+  document.querySelectorAll('.compra-cantidad, .compra-costo').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
+      const idx = Number(el.dataset.idx);
+      if (el.classList.contains('compra-cantidad')) compraItemsState[idx].cantidad = el.value;
+      else compraItemsState[idx].costo_unitario = el.value;
+      actualizarTotalCompraPreview();
+    });
+  });
+  document.querySelectorAll('[data-quitar]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      compraItemsState.splice(Number(btn.dataset.quitar), 1);
+      renderTablaCompra();
+      actualizarTotalCompraPreview();
+    });
+  });
+
+  actualizarTotalCompraPreview();
+}
+
+function actualizarTotalCompraPreview() {
+  const total = compraItemsState.reduce((s, it) => s + (Number(it.cantidad) || 0) * (Number(it.costo_unitario) || 0), 0);
+  document.getElementById('compra-total-preview').textContent = `$${total.toFixed(2)}`;
+}
+
+async function guardarCompra() {
+  const sucursal_id = document.getElementById('sucursal-select').value;
+  const proveedor = document.getElementById('compra-proveedor').value.trim();
+  const fecha = document.getElementById('compra-fecha').value || fechaNegocioActual();
+
+  const itemsValidos = compraItemsState.filter((it) => it.insumo_id && Number(it.cantidad) > 0);
+  if (!itemsValidos.length) {
+    alert('Asigna el insumo y la cantidad de al menos una fila antes de guardar.');
+    return;
+  }
+
+  const btn = document.getElementById('btn-guardar-compra');
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+
+  const resp = await fetch('/api/compras', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sucursal_id,
+      proveedor,
+      fecha,
+      items: itemsValidos.map((it) => ({
+        insumo_id: it.insumo_id,
+        descripcion: it.descripcion,
+        cantidad: it.cantidad,
+        costo_unitario: it.costo_unitario,
+      })),
+    }),
+  });
+
+  btn.disabled = false;
+  btn.textContent = 'Guardar compra';
+
+  if (!resp.ok) {
+    const err = await resp.json();
+    alert(err.error || 'No se pudo guardar la compra');
+    return;
+  }
+
+  compraItemsState = [];
+  document.getElementById('compra-form-detalle').style.display = 'none';
+  document.getElementById('compra-foto').value = '';
+  document.getElementById('compra-progreso').textContent = '✅ Compra guardada, se sumó al inventario.';
+  cargarHistorialCompras();
+}
+
+async function cargarHistorialCompras() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  const compras = await fetch(`/api/compras?sucursal_id=${sucursalId}`).then((r) => r.json());
+  const cont = document.getElementById('historial-compras');
+
+  if (!compras.length) {
+    cont.innerHTML = '<p style="color:#999;font-size:13px">Sin compras registradas todavía</p>';
+    return;
+  }
+
+  cont.innerHTML = compras
+    .map((c) => {
+      const items = c.items
+        .map((it) => `<div style="font-size:13px;padding:2px 0">${it.insumo_nombre}: ${Number(it.cantidad)} ${it.unidad} — $${Number(it.subtotal).toFixed(2)}</div>`)
+        .join('');
+      return `
+        <div style="background:white;border-radius:10px;padding:12px;margin-bottom:8px">
+          <div style="display:flex;justify-content:space-between;font-size:13px;color:#888;margin-bottom:6px">
+            <span>${c.fecha}${c.proveedor ? ' · ' + escapeHtml(c.proveedor) : ''}</span>
+            <span style="font-weight:bold;color:#333">$${Number(c.total).toFixed(2)}</span>
+          </div>
+          ${items}
+        </div>`;
+    })
+    .join('');
+}
 
 // ==================== IMPORTAR HISTORIAL (CSV) ====================
 
