@@ -9,7 +9,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 
 // Sirve las dos pantallas: /pos (toma de pedidos) y /kds (monitor de cocina)
 app.use('/pos', express.static(path.join(__dirname, 'public/pos')));
@@ -397,6 +397,144 @@ app.get('/api/conteos', async (req, res) => {
     'SELECT * FROM conteos_inventario WHERE sucursal_id = $1 ORDER BY creado_en DESC LIMIT 20',
     [sucursal_id]
   );
+  res.json(rows);
+});
+
+
+// ---------- Compras: leer ticket con Claude y registrar ----------
+function normalizarTexto(str) {
+  return (str || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function sugerirInsumo(descripcion, insumos) {
+  const desc = normalizarTexto(descripcion);
+  if (!desc) return null;
+  return (
+    insumos.find((ins) => {
+      const nombre = normalizarTexto(ins.nombre);
+      return nombre && (desc.includes(nombre) || nombre.includes(desc));
+    }) || null
+  );
+}
+
+app.post('/api/compras/leer-ticket', async (req, res) => {
+  const { imagen_base64, media_type } = req.body;
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(400).json({ error: 'Falta configurar ANTHROPIC_API_KEY en el .env' });
+  }
+  if (!imagen_base64) {
+    return res.status(400).json({ error: 'Falta la imagen del ticket' });
+  }
+  try {
+    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const msg = await anthropic.messages.create({
+      model: 'claude-sonnet-5',
+      max_tokens: 2000,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: media_type || 'image/jpeg', data: imagen_base64 } },
+            {
+              type: 'text',
+              text: `Eres un asistente que lee tickets/facturas de compra de insumos para una taquería en México. Extrae cada producto/línea del ticket. Si el precio unitario no aparece explícito pero sí el subtotal de la línea, calcúlalo dividiendo subtotal entre cantidad. Si aparecen, identifica también el proveedor, la fecha (formato AAAA-MM-DD) y el total del ticket.
+
+Responde ÚNICAMENTE con un JSON válido, sin texto adicional, sin explicaciones, sin backticks de markdown, exactamente con esta forma:
+{"proveedor": string o null, "fecha": "AAAA-MM-DD" o null, "total": number o null, "items": [{"descripcion": string, "cantidad": number, "precio_unitario": number}]}`,
+            },
+          ],
+        },
+      ],
+    });
+
+    let texto = msg.content[0].text.trim();
+    texto = texto.replace(/^```json/i, '').replace(/^```/, '').replace(/```$/, '').trim();
+    const datos = JSON.parse(texto);
+
+    const { rows: insumos } = await pool.query('SELECT * FROM insumos');
+    const items = (datos.items || []).map((it) => {
+      const sugerido = sugerirInsumo(it.descripcion, insumos);
+      return {
+        descripcion: it.descripcion,
+        cantidad: it.cantidad,
+        precio_unitario: it.precio_unitario,
+        insumo_id_sugerido: sugerido ? sugerido.id : null,
+        insumo_nombre_sugerido: sugerido ? sugerido.nombre : null,
+      };
+    });
+
+    res.json({ proveedor: datos.proveedor, fecha: datos.fecha, total: datos.total, items });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'No se pudo leer el ticket. Intenta con una foto más clara y derecha, o captura los productos a mano.' });
+  }
+});
+
+app.post('/api/compras', async (req, res) => {
+  const { sucursal_id, proveedor, fecha, items } = req.body; // items: [{ insumo_id, descripcion, cantidad, costo_unitario }]
+  if (!sucursal_id || !items || !items.length) {
+    return res.status(400).json({ error: 'Faltan datos de la compra' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const total = items.reduce((s, it) => s + Number(it.cantidad) * Number(it.costo_unitario || 0), 0);
+
+    const compraRes = await client.query(
+      `INSERT INTO compras (sucursal_id, proveedor, fecha, total) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [sucursal_id, proveedor || null, fecha, total]
+    );
+    const compra = compraRes.rows[0];
+
+    for (const it of items) {
+      const subtotal = Number(it.cantidad) * Number(it.costo_unitario || 0);
+      await client.query(
+        `INSERT INTO compra_items (compra_id, insumo_id, descripcion_ticket, cantidad, costo_unitario, subtotal)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [compra.id, it.insumo_id, it.descripcion || null, it.cantidad, it.costo_unitario || 0, subtotal]
+      );
+      if (it.costo_unitario) {
+        await client.query('UPDATE insumos SET costo_unitario = $1 WHERE id = $2', [it.costo_unitario, it.insumo_id]);
+      }
+    }
+
+    await client.query('COMMIT');
+
+    // Suma el stock comprado (fuera de la transacción, mismo patrón que el resto del inventario)
+    for (const it of items) {
+      await ajustarStockInsumo(it.insumo_id, sucursal_id, Number(it.cantidad));
+    }
+
+    res.json(compra);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error(err);
+    res.status(500).json({ error: 'No se pudo guardar la compra' });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/compras', async (req, res) => {
+  const { sucursal_id } = req.query;
+  const { rows } = await pool.query(
+    'SELECT * FROM compras WHERE sucursal_id = $1 ORDER BY creado_en DESC LIMIT 30',
+    [sucursal_id]
+  );
+  for (const c of rows) {
+    const { rows: items } = await pool.query(
+      `SELECT ci.*, i.nombre AS insumo_nombre, i.unidad
+       FROM compra_items ci JOIN insumos i ON i.id = ci.insumo_id
+       WHERE ci.compra_id = $1`,
+      [c.id]
+    );
+    c.items = items;
+  }
   res.json(rows);
 });
 
