@@ -19,7 +19,7 @@ async function cargarSucursales() {
 async function cargarPedidos() {
   pedidos = await fetch(`/api/pedidos?sucursal_id=${sucursalId}`).then((r) => r.json());
   // solo interesa lo que sigue activo en cocina
-  pedidos = pedidos.filter((p) => ['recibido', 'en_preparacion', 'listo'].includes(p.estado));
+  pedidos = pedidos.filter((p) => ['recibido', 'en_preparacion', 'listo'].includes(p.estado) && !p.cancelado);
   render();
 }
 
@@ -103,7 +103,7 @@ socket.on('nuevo_pedido', (pedido) => {
 });
 
 socket.on('pedido_actualizado', (pedidoActualizado) => {
-  if (pedidoActualizado.estado === 'entregado' || pedidoActualizado.estado === 'cancelado') {
+  if (pedidoActualizado.estado === 'entregado' || pedidoActualizado.estado === 'cancelado' || pedidoActualizado.cancelado) {
     pedidos = pedidos.filter((p) => p.id !== pedidoActualizado.id);
   } else {
     const idx = pedidos.findIndex((p) => p.id === pedidoActualizado.id);
