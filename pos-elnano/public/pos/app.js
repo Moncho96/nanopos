@@ -125,7 +125,7 @@ function renderPedidoRow(pedido) {
   return `
     <div class="pedido-row" data-id="${pedido.id}">
       <div class="pedido-row-top">
-        <span class="pedido-row-id">#${pedido.id} <span class="badge badge-${pedido.tipo}">${tipoLabel}</span></span>
+        <span class="pedido-row-id">#${pedido.numero_dia ?? pedido.id} <span class="badge badge-${pedido.tipo}">${tipoLabel}</span></span>
         <span class="pedido-row-hora">${fechaCorta} · ${hora}</span>
       </div>
       <div class="pedido-row-cliente">👤 ${pedido.cliente_nombre || ''}</div>
@@ -210,7 +210,7 @@ function abrirOverlayNuevo(tipo) {
 async function abrirOverlayEditar(pedidoId) {
   const pedido = await fetch(`/api/pedidos/${pedidoId}`).then((r) => r.json());
   ticketState = { modo: 'editar', tipo: pedido.tipo, pedidoId: pedido.id, pedidoData: pedido, soloLectura: pedido.pagado || pedido.cancelado };
-  document.getElementById('overlay-titulo').textContent = `Pedido #${pedido.id}` + (pedido.pagado ? ' — cobrado' : '');
+  document.getElementById('overlay-titulo').textContent = `Pedido #${pedido.numero_dia ?? pedido.id}` + (pedido.pagado ? ' — cobrado' : '');
   document.querySelector('.overlay-body').classList.remove('vista-productos');
   prepararCamposCliente();
   document.getElementById('ticket-cliente-nombre').value = pedido.cliente_nombre || '';
@@ -246,7 +246,7 @@ async function abrirOverlayEditar(pedidoId) {
 }
 
 document.getElementById('btn-cancelar-pedido-completo').addEventListener('click', async () => {
-  if (!confirm(`¿Cancelar el pedido #${ticketState.pedidoId} por completo? No se puede deshacer.`)) return;
+  if (!confirm(`¿Cancelar el pedido #${ticketState.pedidoData.numero_dia ?? ticketState.pedidoId} por completo? No se puede deshacer.`)) return;
   await fetch(`/api/pedidos/${ticketState.pedidoId}/cancelar`, { method: 'PATCH' });
   ticketState = null;
   document.getElementById('overlay-pedido').classList.remove('abierto');
@@ -771,7 +771,7 @@ function renderModalCobro() {
   const html = `
     <div class="modal-overlay" id="modal-overlay-cobro">
       <div class="modal-box">
-        <h3>Cobrar pedido #${pedidoEnCobro.id}</h3>
+        <h3>Cobrar pedido #${pedidoEnCobro.numero_dia ?? pedidoEnCobro.id}</h3>
         <div class="total-modal">Total: $${total.toFixed(2)}</div>
         ${filas}
         <button id="btn-dividir" class="btn-cancelar-modal" style="border:1px dashed #ccc;border-radius:8px;color:#555;margin-bottom:10px">+ Dividir con otro método</button>
