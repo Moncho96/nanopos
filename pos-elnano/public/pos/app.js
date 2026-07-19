@@ -149,8 +149,12 @@ document.getElementById('resumen-toggle').addEventListener('click', () => {
 
 async function cargarResumenCaja() {
   const sucursalId = document.getElementById('sucursal-select').value;
-  const hoy = fechaNegocioActual();
-  const corte = await fetch(`/api/corte?sucursal_id=${sucursalId}&fecha=${hoy}`).then((r) => r.json());
+  const desde = document.getElementById('historial-fecha-desde').value || fechaNegocioActual();
+  const hasta = document.getElementById('historial-fecha-hasta').value || desde;
+  const corte = await fetch(`/api/corte?sucursal_id=${sucursalId}&fecha=${desde}&fecha_hasta=${hasta}`).then((r) => r.json());
+
+  const tituloEl = document.querySelector('#resumen-toggle span:first-child');
+  tituloEl.textContent = desde === hasta ? `📊 Resumen de caja — ${desde}` : `📊 Resumen de caja — ${desde} a ${hasta}`;
 
   const panel = document.getElementById('resumen-panel');
   panel.innerHTML =
@@ -1109,7 +1113,10 @@ let filtroHistorial = 'todos';
 
 document.getElementById('historial-fecha-desde').value = fechaNegocioActual();
 document.getElementById('historial-fecha-hasta').value = fechaNegocioActual();
-document.getElementById('btn-buscar-historial').addEventListener('click', cargarHistorial);
+document.getElementById('btn-buscar-historial').addEventListener('click', () => {
+  cargarHistorial();
+  if (document.getElementById('resumen-toggle').classList.contains('abierto')) cargarResumenCaja();
+});
 
 document.querySelectorAll('[data-filtro-hist]').forEach((btn) => {
   btn.addEventListener('click', () => {
