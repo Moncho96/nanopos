@@ -260,6 +260,7 @@
 <div class="drawer-overlay" id="drawer-overlay">
   <div class="drawer">
     <h3>Menú</h3>
+    <button class="item" id="btn-abrir-importar">📥 Importar historial</button>
     <button class="item" id="btn-abrir-conteo">📦 Conteo de inventario</button>
     <button class="item" id="btn-abrir-compras">🛒 Planeación de compras</button>
     <button class="item" id="btn-abrir-menu-admin">🍽️ Menú (productos e insumos)</button>
@@ -282,6 +283,31 @@
     <button id="btn-generar-compras">🧠 Generar sugerencia</button>
   </div>
   <div id="compras-resultado"></div>
+</div>
+
+<!-- Importar historial -->
+<div class="full-overlay" id="overlay-importar">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-importar">✕</button>
+    <span class="titulo">Importar historial</span>
+  </div>
+  <div style="padding:12px;font-size:13px;color:#666;line-height:1.6">
+    Sube un archivo <strong>CSV</strong> con tus ventas anteriores. Cada fila es un producto
+    dentro de un pedido — varias filas con el mismo "pedido_externo" se juntan en un solo pedido.
+    Esto <strong>no descuenta inventario</strong> ni avisa a cocina, solo queda guardado en el
+    Historial y cuenta para reportes de fechas pasadas.
+    <br><br>
+    Columnas requeridas (en este orden, con encabezado):<br>
+    <code style="font-size:11px;background:#eee;padding:4px 6px;border-radius:4px;display:inline-block;margin-top:4px">
+      pedido_externo,fecha,hora,sucursal,cliente_nombre,tipo,metodo_pago,producto,variante,cantidad,precio_unitario
+    </code>
+  </div>
+  <div class="form-inline">
+    <input type="file" id="importar-archivo" accept=".csv" style="flex:1" />
+    <button id="btn-importar-csv">Importar</button>
+  </div>
+  <div id="importar-progreso" style="padding:0 12px;font-size:13px;color:#666"></div>
+  <div id="importar-resultado" style="padding:0 12px 24px"></div>
 </div>
 
 <!-- Conteo de inventario -->

@@ -878,6 +878,12 @@ document.getElementById('btn-menu').addEventListener('click', () => document.get
 document.getElementById('drawer-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'drawer-overlay') document.getElementById('drawer-overlay').classList.remove('abierto');
 });
+document.getElementById('btn-abrir-importar').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-importar').classList.add('abierto');
+});
+document.getElementById('btn-cerrar-importar').addEventListener('click', () => document.getElementById('overlay-importar').classList.remove('abierto'));
+
 document.getElementById('btn-abrir-conteo').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-conteo').classList.add('abierto');
@@ -1138,6 +1144,126 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== IMPORTAR HISTORIAL (CSV) ====================
+
+const COLUMNAS_IMPORTAR = [
+  'pedido_externo', 'fecha', 'hora', 'sucursal', 'cliente_nombre',
+  'tipo', 'metodo_pago', 'producto', 'variante', 'cantidad', 'precio_unitario',
+];
+
+// Parser de CSV sencillo, soporta campos entre comillas con comas adentro
+function parsearCSV(texto) {
+  const lineas = texto.split(/\r\n|\n/).filter((l) => l.trim() !== '');
+  if (!lineas.length) return [];
+
+  function parsearLinea(linea) {
+    const campos = [];
+    let actual = '';
+    let entreComillas = false;
+    for (let i = 0; i < linea.length; i++) {
+      const ch = linea[i];
+      if (ch === '"') {
+        entreComillas = !entreComillas;
+      } else if (ch === ',' && !entreComillas) {
+        campos.push(actual);
+        actual = '';
+      } else {
+        actual += ch;
+      }
+    }
+    campos.push(actual);
+    return campos.map((c) => c.trim());
+  }
+
+  const encabezado = parsearLinea(lineas[0]).map((h) => h.toLowerCase());
+  const filas = [];
+  for (let i = 1; i < lineas.length; i++) {
+    const valores = parsearLinea(lineas[i]);
+    const fila = {};
+    encabezado.forEach((col, idx) => {
+      fila[col] = valores[idx] !== undefined ? valores[idx] : '';
+    });
+    filas.push(fila);
+  }
+  return filas;
+}
+
+document.getElementById('btn-importar-csv').addEventListener('click', async () => {
+  const input = document.getElementById('importar-archivo');
+  const progreso = document.getElementById('importar-progreso');
+  const resultado = document.getElementById('importar-resultado');
+  resultado.innerHTML = '';
+
+  if (!input.files.length) {
+    alert('Elige un archivo CSV primero');
+    return;
+  }
+
+  const texto = await input.files[0].text();
+  const filas = parsearCSV(texto);
+
+  if (!filas.length) {
+    progreso.textContent = 'El archivo está vacío o no se pudo leer.';
+    return;
+  }
+
+  const columnasFaltantes = COLUMNAS_IMPORTAR.filter((c) => !(c in filas[0]));
+  if (columnasFaltantes.length) {
+    progreso.textContent = `Faltan columnas en el CSV: ${columnasFaltantes.join(', ')}`;
+    return;
+  }
+
+  const TAMANO_LOTE = 300;
+  const lotes = [];
+  for (let i = 0; i < filas.length; i += TAMANO_LOTE) {
+    lotes.push(filas.slice(i, i + TAMANO_LOTE));
+  }
+
+  const btn = document.getElementById('btn-importar-csv');
+  btn.disabled = true;
+
+  let totalCreados = 0;
+  let todosLosErrores = [];
+
+  for (let i = 0; i < lotes.length; i++) {
+    progreso.textContent = `Importando lote ${i + 1} de ${lotes.length} (${filas.length} filas en total)...`;
+    try {
+      const resp = await fetch('/api/importar-historico', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filas: lotes[i] }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        todosLosErrores.push(data.error || `Error en el lote ${i + 1}`);
+        continue;
+      }
+      totalCreados += data.pedidosCreados;
+      todosLosErrores = todosLosErrores.concat(data.errores || []);
+    } catch (err) {
+      todosLosErrores.push(`No se pudo enviar el lote ${i + 1} (revisa tu conexión)`);
+    }
+  }
+
+  btn.disabled = false;
+  progreso.textContent = '';
+
+  resultado.innerHTML = `
+    <div style="background:white;border-radius:10px;padding:14px;margin-bottom:10px">
+      <div style="font-size:16px;font-weight:bold;color:#1a7d3a">✅ ${totalCreados} pedido(s) importados</div>
+      ${todosLosErrores.length ? `<div style="margin-top:8px;color:#b8232f;font-size:13px">⚠️ ${todosLosErrores.length} fila(s) con problemas:</div>` : ''}
+    </div>
+    ${
+      todosLosErrores.length
+        ? `<div style="background:white;border-radius:10px;padding:12px;max-height:300px;overflow-y:auto;font-size:12px;color:#b8232f;line-height:1.6">
+            ${todosLosErrores.map((e) => `• ${escapeHtml(e)}`).join('<br>')}
+          </div>`
+        : ''
+    }`;
+
+  cargarPedidosYContar();
+});
 
 // ==================== CONTEO DE INVENTARIO ====================
 
