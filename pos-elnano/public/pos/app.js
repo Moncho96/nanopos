@@ -1165,6 +1165,38 @@ document.getElementById('btn-agregar-fila-compra').addEventListener('click', () 
 });
 document.getElementById('btn-guardar-compra').addEventListener('click', guardarCompra);
 
+// Reduce el tamaño de la foto antes de mandarla (las fotos de celular pueden pesar
+// varios MB, y hay un límite de tamaño para las imágenes que recibe Claude)
+function comprimirImagenABase64(archivo, maxDimension, calidad) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = Math.round(height * (maxDimension / width));
+            width = maxDimension;
+          } else {
+            width = Math.round(width * (maxDimension / height));
+            height = maxDimension;
+          }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', calidad).split(',')[1]);
+      };
+      img.onerror = () => reject(new Error('No se pudo leer la imagen'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+    reader.readAsDataURL(archivo);
+  });
+}
+
 async function leerTicketCompra() {
   const input = document.getElementById('compra-foto');
   const progreso = document.getElementById('compra-progreso');
@@ -1179,24 +1211,18 @@ async function leerTicketCompra() {
 
   try {
     const archivo = input.files[0];
-    const dataUrl = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = reject;
-      reader.readAsDataURL(archivo);
-    });
-    const base64 = dataUrl.split(',')[1];
+    const base64 = await comprimirImagenABase64(archivo, 1600, 0.82);
 
     const resp = await fetch('/api/compras/leer-ticket', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ imagen_base64: base64, media_type: archivo.type || 'image/jpeg' }),
+      body: JSON.stringify({ imagen_base64: base64, media_type: 'image/jpeg' }),
     });
     const data = await resp.json();
 
     if (!resp.ok) {
       progreso.textContent = '';
-      alert(data.error || 'No se pudo leer el ticket');
+      alert((data.error || 'No se pudo leer el ticket') + (data.detalle ? '\n\nDetalle: ' + data.detalle : ''));
       return;
     }
 
@@ -1218,7 +1244,7 @@ async function leerTicketCompra() {
     renderTablaCompra();
   } catch (err) {
     progreso.textContent = '';
-    alert('No se pudo procesar la imagen, intenta de nuevo.');
+    alert('No se pudo procesar la imagen: ' + (err.message || 'intenta de nuevo.'));
   } finally {
     btn.disabled = false;
   }
