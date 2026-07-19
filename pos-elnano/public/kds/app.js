@@ -68,7 +68,7 @@ function renderTicket(pedido) {
   return `
     <div class="ticket ${pedido.estado}">
       <div class="top">
-        <span>#${pedido.id} · ${pedido.tipo}</span>
+        <span>#${pedido.numero_dia ?? pedido.id} · ${pedido.tipo}</span>
         <span>${hora}</span>
       </div>
       <div class="items">${items}</div>
