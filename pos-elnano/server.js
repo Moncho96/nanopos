@@ -472,7 +472,9 @@ function fechaNegocioSQL(columna) {
 }
 
 // ---------- Corte de caja ----------
-async function calcularCorte(sucursalId, fecha) {
+async function calcularCorte(sucursalId, fechaDesde, fechaHasta) {
+  fechaHasta = fechaHasta || fechaDesde;
+
   // Resta, proporcionalmente, el costo de envío de cada pago — ese dinero es
   // para el repartidor, no es venta real del negocio.
   const { rows: ventas } = await pool.query(
@@ -480,23 +482,23 @@ async function calcularCorte(sucursalId, fecha) {
             SUM(pg.monto * (1 - COALESCE(p.costo_envio, 0) / NULLIF(p.total, 0))) AS total
      FROM pagos pg
      JOIN pedidos p ON p.id = pg.pedido_id
-     WHERE p.sucursal_id = $1 AND p.cancelado = false AND ${fechaNegocioSQL('pg.creado_en')} = $2
+     WHERE p.sucursal_id = $1 AND p.cancelado = false AND ${fechaNegocioSQL('pg.creado_en')} BETWEEN $2 AND $3
      GROUP BY pg.metodo`,
-    [sucursalId, fecha]
+    [sucursalId, fechaDesde, fechaHasta]
   );
 
   const { rows: gastos } = await pool.query(
     `SELECT metodo_pago AS metodo, SUM(monto) AS total
      FROM gastos
-     WHERE sucursal_id = $1 AND ${fechaNegocioSQL('creado_en')} = $2
+     WHERE sucursal_id = $1 AND ${fechaNegocioSQL('creado_en')} BETWEEN $2 AND $3
      GROUP BY metodo_pago`,
-    [sucursalId, fecha]
+    [sucursalId, fechaDesde, fechaHasta]
   );
 
   const { rows: pedidosCount } = await pool.query(
     `SELECT COUNT(*) AS cantidad, COALESCE(SUM(costo_envio), 0) AS total_envios
-     FROM pedidos WHERE sucursal_id = $1 AND ${fechaNegocioSQL('pagado_en')} = $2 AND pagado = true AND cancelado = false`,
-    [sucursalId, fecha]
+     FROM pedidos WHERE sucursal_id = $1 AND ${fechaNegocioSQL('pagado_en')} BETWEEN $2 AND $3 AND pagado = true AND cancelado = false`,
+    [sucursalId, fechaDesde, fechaHasta]
   );
 
   const metodos = ['efectivo', 'tarjeta', 'transferencia'];
@@ -512,7 +514,8 @@ async function calcularCorte(sucursalId, fecha) {
   const totalEnvios = Number(pedidosCount[0].total_envios);
 
   return {
-    fecha,
+    fecha: fechaDesde,
+    fechaHasta,
     sucursal_id: Number(sucursalId),
     pedidosCobrados: Number(pedidosCount[0].cantidad),
     resumen,
@@ -524,11 +527,11 @@ async function calcularCorte(sucursalId, fecha) {
 }
 
 app.get('/api/corte', async (req, res) => {
-  const { sucursal_id, fecha } = req.query;
+  const { sucursal_id, fecha, fecha_hasta } = req.query;
   if (!sucursal_id || !fecha) {
     return res.status(400).json({ error: 'Falta sucursal_id o fecha' });
   }
-  res.json(await calcularCorte(sucursal_id, fecha));
+  res.json(await calcularCorte(sucursal_id, fecha, fecha_hasta));
 });
 
 app.get('/api/corte/cerrado', async (req, res) => {
