@@ -878,6 +878,13 @@ document.getElementById('btn-menu').addEventListener('click', () => document.get
 document.getElementById('drawer-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'drawer-overlay') document.getElementById('drawer-overlay').classList.remove('abierto');
 });
+document.getElementById('btn-abrir-conteo').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-conteo').classList.add('abierto');
+  cargarConteo();
+});
+document.getElementById('btn-cerrar-conteo').addEventListener('click', () => document.getElementById('overlay-conteo').classList.remove('abierto'));
+
 document.getElementById('btn-abrir-compras').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-compras').classList.add('abierto');
@@ -1131,6 +1138,113 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== CONTEO DE INVENTARIO ====================
+
+async function cargarConteo() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  const insumos = await fetch(`/api/insumos?sucursal_id=${sucursalId}`).then((r) => r.json());
+
+  document.getElementById('conteo-tabla-body').innerHTML =
+    insumos
+      .map(
+        (i) => `
+    <tr>
+      <td>${i.nombre}</td>
+      <td class="num">${Number(i.stock_actual).toFixed(2)} ${i.unidad}</td>
+      <td class="num"><input type="text" inputmode="decimal" class="conteo-contado" data-id="${i.id}" data-teorico="${i.stock_actual}" placeholder="—" style="width:80px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+      <td class="num diferencia-celda" data-id="${i.id}" style="color:#999">—</td>
+    </tr>`
+      )
+      .join('') || '<tr><td colspan="4" style="text-align:center;color:#999">Sin insumos todavía — agrégalos en Menú → Insumos</td></tr>';
+
+  document.querySelectorAll('.conteo-contado').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
+      const celda = document.querySelector(`.diferencia-celda[data-id="${el.dataset.id}"]`);
+      if (el.value === '') {
+        celda.textContent = '—';
+        celda.style.color = '#999';
+        return;
+      }
+      const diferencia = Number(el.value) - Number(el.dataset.teorico);
+      celda.textContent = (diferencia > 0 ? '+' : '') + diferencia.toFixed(2);
+      celda.style.color = Math.abs(diferencia) < 0.01 ? '#1a7d3a' : '#b8232f';
+    });
+  });
+
+  cargarHistorialConteos();
+}
+
+document.getElementById('btn-guardar-conteo').addEventListener('click', async () => {
+  const sucursal_id = document.getElementById('sucursal-select').value;
+  const conteos = [];
+  document.querySelectorAll('.conteo-contado').forEach((el) => {
+    if (el.value !== '') conteos.push({ insumo_id: Number(el.dataset.id), contado: el.value });
+  });
+
+  if (!conteos.length) {
+    alert('No capturaste ningún conteo todavía');
+    return;
+  }
+  if (!confirm(`¿Guardar el conteo de ${conteos.length} insumo(s)? Esto ajusta el stock del sistema a lo que capturaste.`)) return;
+
+  const btn = document.getElementById('btn-guardar-conteo');
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+
+  const resp = await fetch('/api/conteos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursal_id, fecha: fechaNegocioActual(), conteos }),
+  });
+
+  btn.disabled = false;
+  btn.textContent = 'Guardar conteo';
+
+  if (!resp.ok) {
+    const err = await resp.json();
+    alert(err.error || 'No se pudo guardar el conteo');
+    return;
+  }
+
+  cargarConteo();
+});
+
+async function cargarHistorialConteos() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  const conteos = await fetch(`/api/conteos?sucursal_id=${sucursalId}`).then((r) => r.json());
+  const cont = document.getElementById('historial-conteos');
+
+  if (!conteos.length) {
+    cont.innerHTML = '<p style="color:#999;font-size:13px">Sin conteos registrados todavía</p>';
+    return;
+  }
+
+  cont.innerHTML = conteos
+    .map((c) => {
+      const fechaHora = new Date(c.creado_en).toLocaleString('es-MX');
+      const conDiferencia = c.resumen.filter((r) => Math.abs(r.diferencia) >= 0.01);
+      const detalle = conDiferencia.length
+        ? conDiferencia
+            .map(
+              (r) =>
+                `<div style="display:flex;justify-content:space-between;font-size:13px;padding:3px 0">
+                  <span>${r.nombre}</span>
+                  <span style="color:${r.diferencia > 0 ? '#1a7d3a' : '#b8232f'}">${r.diferencia > 0 ? '+' : ''}${Number(r.diferencia).toFixed(2)} ${r.unidad}</span>
+                </div>`
+            )
+            .join('')
+        : '<div style="font-size:13px;color:#1a7d3a">✅ Sin diferencias</div>';
+
+      return `
+        <div style="background:white;border-radius:10px;padding:12px;margin-bottom:8px">
+          <div style="font-size:12px;color:#888;margin-bottom:6px">${fechaHora} · ${c.resumen.length} insumo(s) contados</div>
+          ${detalle}
+        </div>`;
+    })
+    .join('');
+}
 
 // ==================== PLANEACIÓN DE COMPRAS ====================
 

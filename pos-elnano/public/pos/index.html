@@ -260,6 +260,7 @@
 <div class="drawer-overlay" id="drawer-overlay">
   <div class="drawer">
     <h3>Menú</h3>
+    <button class="item" id="btn-abrir-conteo">📦 Conteo de inventario</button>
     <button class="item" id="btn-abrir-compras">🛒 Planeación de compras</button>
     <button class="item" id="btn-abrir-menu-admin">🍽️ Menú (productos e insumos)</button>
     <button class="item" id="btn-abrir-historial">🕓 Historial de pedidos</button>
@@ -281,6 +282,26 @@
     <button id="btn-generar-compras">🧠 Generar sugerencia</button>
   </div>
   <div id="compras-resultado"></div>
+</div>
+
+<!-- Conteo de inventario -->
+<div class="full-overlay" id="overlay-conteo">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-conteo">✕</button>
+    <span class="titulo">Conteo de inventario</span>
+  </div>
+  <div style="padding:12px;font-size:13px;color:#666">
+    "Sistema" es lo que el sistema calcula según las ventas. Pon en "Contado" lo que cuentes
+    físicamente — deja en blanco lo que no cuentes hoy.
+  </div>
+  <table class="tabla-simple">
+    <thead><tr><th>Insumo</th><th class="num">Sistema</th><th class="num">Contado</th><th class="num">Diferencia</th></tr></thead>
+    <tbody id="conteo-tabla-body"></tbody>
+  </table>
+  <button id="btn-guardar-conteo" class="btn-nuevo-pedido" style="margin:0 12px 16px;width:calc(100% - 24px);background:#1a7d3a">Guardar conteo</button>
+
+  <h3 style="padding:0 12px">Conteos anteriores</h3>
+  <div id="historial-conteos" style="padding:0 12px 24px"></div>
 </div>
 
 <!-- Menú: productos e insumos -->
