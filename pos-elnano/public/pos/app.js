@@ -871,6 +871,18 @@ document.getElementById('btn-menu').addEventListener('click', () => document.get
 document.getElementById('drawer-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'drawer-overlay') document.getElementById('drawer-overlay').classList.remove('abierto');
 });
+document.getElementById('btn-abrir-menu-admin').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-menu-admin').classList.add('abierto');
+  cargarMenuAdmin();
+});
+document.getElementById('btn-cerrar-menu-admin').addEventListener('click', async () => {
+  document.getElementById('overlay-menu-admin').classList.remove('abierto');
+  // Recarga la lista "normal" (sin ocultos) para que la toma de pedidos no se vea afectada
+  state.categorias = await fetch('/api/categorias').then((r) => r.json());
+  state.productos = await fetch('/api/productos').then((r) => r.json());
+});
+
 document.getElementById('btn-abrir-historial').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-historial').classList.add('abierto');
@@ -1106,6 +1118,316 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== MENÚ: PRODUCTOS E INSUMOS ====================
+
+document.querySelectorAll('[data-submenu]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-submenu]').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    const esProductos = btn.dataset.submenu === 'productos';
+    document.getElementById('vista-menu-productos').style.display = esProductos ? 'block' : 'none';
+    document.getElementById('vista-menu-insumos').style.display = esProductos ? 'none' : 'block';
+    if (!esProductos) cargarInsumosAdmin();
+  });
+});
+
+async function cargarMenuAdmin() {
+  await recargarCategoriasYProductos();
+  renderSelectCategoriasAdmin();
+  renderProductosAdmin();
+}
+
+async function recargarCategoriasYProductos() {
+  state.categorias = await fetch('/api/categorias').then((r) => r.json());
+  state.productos = await fetch('/api/productos?todos=true').then((r) => r.json());
+}
+
+function renderSelectCategoriasAdmin() {
+  document.getElementById('nuevo-prod-categoria').innerHTML = state.categorias
+    .map((c) => `<option value="${c.id}">${c.nombre}</option>`)
+    .join('');
+}
+
+document.getElementById('btn-agregar-categoria').addEventListener('click', async () => {
+  const nombre = document.getElementById('nueva-categoria-nombre').value.trim();
+  if (!nombre) return;
+  await fetch('/api/categorias', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre }),
+  });
+  document.getElementById('nueva-categoria-nombre').value = '';
+  await recargarCategoriasYProductos();
+  renderSelectCategoriasAdmin();
+  renderProductosAdmin();
+});
+
+document.getElementById('nuevo-prod-precio').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+});
+
+document.getElementById('btn-agregar-producto-admin').addEventListener('click', async () => {
+  const nombre = document.getElementById('nuevo-prod-nombre').value.trim();
+  const categoria_id = document.getElementById('nuevo-prod-categoria').value;
+  const precio = document.getElementById('nuevo-prod-precio').value;
+  if (!nombre || !categoria_id || !precio) {
+    alert('Falta el nombre, categoría o precio');
+    return;
+  }
+  await fetch('/api/productos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, categoria_id, precio }),
+  });
+  document.getElementById('nuevo-prod-nombre').value = '';
+  document.getElementById('nuevo-prod-precio').value = '';
+  await recargarCategoriasYProductos();
+  renderProductosAdmin();
+});
+
+function renderProductosAdmin() {
+  const categoriaPorId = {};
+  state.categorias.forEach((c) => (categoriaPorId[c.id] = c.nombre));
+
+  document.getElementById('productos-admin-tabla-body').innerHTML = state.productos
+    .map(
+      (p) => `
+    <tr style="opacity:${p.disponible ? '1' : '0.5'}">
+      <td><input type="text" class="prod-admin-nombre" data-id="${p.id}" value="${p.nombre}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td>
+        <select class="prod-admin-categoria" data-id="${p.id}" style="padding:6px;border-radius:6px;border:1px solid #ddd">
+          ${state.categorias.map((c) => `<option value="${c.id}" ${c.id === p.categoria_id ? 'selected' : ''}>${c.nombre}</option>`).join('')}
+        </select>
+      </td>
+      <td class="num"><input type="text" inputmode="decimal" class="prod-admin-precio" data-id="${p.id}" value="${p.precio}" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+      <td style="white-space:nowrap">
+        <button class="btn-eliminar-fila" data-guardar="${p.id}" title="Guardar">💾</button>
+        <button class="btn-eliminar-fila" data-toggle="${p.id}" title="${p.disponible ? 'Ocultar del menú' : 'Mostrar en el menú'}">${p.disponible ? '👁️' : '🚫'}</button>
+        <button class="btn-eliminar-fila" data-receta="${p.id}" title="Receta">📋</button>
+      </td>
+    </tr>`
+    )
+    .join('');
+
+  document.querySelectorAll('[data-guardar]').forEach((btn) => {
+    btn.addEventListener('click', () => guardarProductoAdmin(Number(btn.dataset.guardar)));
+  });
+  document.querySelectorAll('[data-toggle]').forEach((btn) => {
+    btn.addEventListener('click', () => toggleDisponibleAdmin(Number(btn.dataset.toggle)));
+  });
+  document.querySelectorAll('[data-receta]').forEach((btn) => {
+    btn.addEventListener('click', () => abrirModalReceta(Number(btn.dataset.receta)));
+  });
+  document.querySelectorAll('.prod-admin-precio').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
+    });
+  });
+}
+
+async function guardarProductoAdmin(productoId) {
+  const nombre = document.querySelector(`.prod-admin-nombre[data-id="${productoId}"]`).value.trim();
+  const categoria_id = document.querySelector(`.prod-admin-categoria[data-id="${productoId}"]`).value;
+  const precio = document.querySelector(`.prod-admin-precio[data-id="${productoId}"]`).value;
+  await fetch(`/api/productos/${productoId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, categoria_id, precio }),
+  });
+  await recargarCategoriasYProductos();
+  renderProductosAdmin();
+}
+
+async function toggleDisponibleAdmin(productoId) {
+  const producto = state.productos.find((p) => p.id === productoId);
+  if (producto.disponible) {
+    if (!confirm(`¿Ocultar "${producto.nombre}" del menú? Ya no se podrá pedir, pero se conserva en el historial.`)) return;
+    await fetch(`/api/productos/${productoId}`, { method: 'DELETE' });
+  } else {
+    await fetch(`/api/productos/${productoId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disponible: true }),
+    });
+  }
+  await recargarCategoriasYProductos();
+  renderProductosAdmin();
+}
+
+// ---------- Receta (insumos por producto) ----------
+
+let insumosCatalogoCache = null;
+
+async function abrirModalReceta(productoId) {
+  const producto = state.productos.find((p) => p.id === productoId);
+  if (!insumosCatalogoCache) {
+    insumosCatalogoCache = await fetch('/api/insumos').then((r) => r.json());
+  }
+  const receta = await fetch(`/api/productos/${productoId}/receta`).then((r) => r.json());
+  renderModalReceta(producto, receta);
+}
+
+function renderModalReceta(producto, receta) {
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-receta">
+      <div class="modal-box">
+        <h3>Receta — ${producto.nombre}</h3>
+        <div style="font-size:12px;color:#888;margin-bottom:10px">Cantidad de cada insumo que se gasta al vender 1 unidad</div>
+        <div id="receta-items">
+          ${
+            receta
+              .map(
+                (r) => `
+            <div class="editar-item-row">
+              <span>${r.insumo_nombre} — ${Number(r.cantidad)} ${r.unidad}</span>
+              <button data-insumo-id="${r.insumo_id}">×</button>
+            </div>`
+              )
+              .join('') || '<p style="color:#999;font-size:13px">Sin insumos asignados todavía</p>'
+          }
+        </div>
+        <div class="modal-grupo">
+          <div class="modal-grupo-titulo">Agregar insumo</div>
+          <div style="display:flex;gap:8px">
+            <select id="receta-insumo-select" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd">
+              ${insumosCatalogoCache.map((i) => `<option value="${i.id}">${i.nombre} (${i.unidad})</option>`).join('')}
+            </select>
+            <input type="text" inputmode="decimal" id="receta-cantidad" placeholder="Cantidad" style="width:90px;padding:8px;border-radius:6px;border:1px solid #ddd" />
+          </div>
+          <button class="btn-agregar" id="btn-agregar-insumo-receta" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:none">+ Agregar a la receta</button>
+        </div>
+        <button class="btn-cancelar-modal" id="btn-cerrar-receta">Cerrar</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  document.getElementById('modal-overlay-receta').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-receta') document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-cerrar-receta').addEventListener('click', () => {
+    document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('receta-cantidad').addEventListener('input', (e) => {
+    e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+  });
+  document.querySelectorAll('#receta-items button[data-insumo-id]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/productos/${producto.id}/receta/${btn.dataset.insumoId}`, { method: 'DELETE' });
+      const recetaNueva = await fetch(`/api/productos/${producto.id}/receta`).then((r) => r.json());
+      renderModalReceta(producto, recetaNueva);
+    });
+  });
+  document.getElementById('btn-agregar-insumo-receta').addEventListener('click', async () => {
+    const insumo_id = document.getElementById('receta-insumo-select').value;
+    const cantidad = document.getElementById('receta-cantidad').value;
+    if (!insumo_id || !cantidad) {
+      alert('Falta elegir el insumo o la cantidad');
+      return;
+    }
+    await fetch(`/api/productos/${producto.id}/receta`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ insumo_id, cantidad }),
+    });
+    const recetaNueva = await fetch(`/api/productos/${producto.id}/receta`).then((r) => r.json());
+    renderModalReceta(producto, recetaNueva);
+  });
+}
+
+// ---------- Insumos (catálogo + stock por sucursal) ----------
+
+async function cargarInsumosAdmin() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  const insumos = await fetch(`/api/insumos?sucursal_id=${sucursalId}`).then((r) => r.json());
+  insumosCatalogoCache = insumos;
+  renderInsumosAdmin(insumos);
+}
+
+function renderInsumosAdmin(insumos) {
+  document.getElementById('insumos-tabla-body').innerHTML = insumos
+    .map(
+      (i) => `
+    <tr>
+      <td><input type="text" class="insumo-nombre" data-id="${i.id}" value="${i.nombre}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td><input type="text" class="insumo-unidad" data-id="${i.id}" value="${i.unidad}" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td class="num"><input type="text" inputmode="decimal" class="insumo-costo" data-id="${i.id}" value="${i.costo_unitario}" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+      <td class="num"><input type="text" inputmode="decimal" class="insumo-stock" data-id="${i.id}" value="${i.stock_actual}" style="width:80px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+      <td style="white-space:nowrap">
+        <button class="btn-eliminar-fila" data-guardar-insumo="${i.id}" title="Guardar">💾</button>
+        <button class="btn-eliminar-fila" data-borrar-insumo="${i.id}" title="Borrar">🗑️</button>
+      </td>
+    </tr>`
+    )
+    .join('') || '<tr><td colspan="5" style="text-align:center;color:#999">Sin insumos todavía</td></tr>';
+
+  document.querySelectorAll('.insumo-costo, .insumo-stock').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
+    });
+  });
+  document.querySelectorAll('[data-guardar-insumo]').forEach((btn) => {
+    btn.addEventListener('click', () => guardarInsumoAdmin(Number(btn.dataset.guardarInsumo)));
+  });
+  document.querySelectorAll('[data-borrar-insumo]').forEach((btn) => {
+    btn.addEventListener('click', () => borrarInsumoAdmin(Number(btn.dataset.borrarInsumo)));
+  });
+}
+
+document.getElementById('nuevo-insumo-costo').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+});
+
+document.getElementById('btn-agregar-insumo').addEventListener('click', async () => {
+  const nombre = document.getElementById('nuevo-insumo-nombre').value.trim();
+  const unidad = document.getElementById('nuevo-insumo-unidad').value.trim();
+  const costo_unitario = document.getElementById('nuevo-insumo-costo').value || 0;
+  if (!nombre || !unidad) {
+    alert('Falta el nombre o la unidad');
+    return;
+  }
+  const resp = await fetch('/api/insumos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, unidad, costo_unitario }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json();
+    alert(err.error || 'No se pudo agregar el insumo');
+    return;
+  }
+  document.getElementById('nuevo-insumo-nombre').value = '';
+  document.getElementById('nuevo-insumo-unidad').value = '';
+  document.getElementById('nuevo-insumo-costo').value = '';
+  cargarInsumosAdmin();
+});
+
+async function guardarInsumoAdmin(insumoId) {
+  const nombre = document.querySelector(`.insumo-nombre[data-id="${insumoId}"]`).value.trim();
+  const unidad = document.querySelector(`.insumo-unidad[data-id="${insumoId}"]`).value.trim();
+  const costo_unitario = document.querySelector(`.insumo-costo[data-id="${insumoId}"]`).value;
+  const stock_actual = document.querySelector(`.insumo-stock[data-id="${insumoId}"]`).value;
+  const sucursal_id = document.getElementById('sucursal-select').value;
+
+  await fetch(`/api/insumos/${insumoId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, unidad, costo_unitario }),
+  });
+  await fetch(`/api/insumos/${insumoId}/stock`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursal_id, stock_actual }),
+  });
+  cargarInsumosAdmin();
+}
+
+async function borrarInsumoAdmin(insumoId) {
+  if (!confirm('¿Borrar este insumo? También se quitará de las recetas que lo usen.')) return;
+  await fetch(`/api/insumos/${insumoId}`, { method: 'DELETE' });
+  insumosCatalogoCache = null;
+  cargarInsumosAdmin();
+}
 
 // ==================== HISTORIAL DE PEDIDOS ====================
 

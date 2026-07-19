@@ -260,9 +260,53 @@
 <div class="drawer-overlay" id="drawer-overlay">
   <div class="drawer">
     <h3>Menú</h3>
+    <button class="item" id="btn-abrir-menu-admin">🍽️ Menú (productos e insumos)</button>
     <button class="item" id="btn-abrir-historial">🕓 Historial de pedidos</button>
     <button class="item" id="btn-abrir-corte">📊 Corte de caja</button>
     <button class="item" id="btn-abrir-envios">🚚 Envíos por colonia</button>
+  </div>
+</div>
+
+<!-- Menú: productos e insumos -->
+<div class="full-overlay" id="overlay-menu-admin">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-menu-admin">✕</button>
+    <span class="titulo">Menú</span>
+  </div>
+
+  <div class="filtros-estado">
+    <button class="filtro active" data-submenu="productos">Productos</button>
+    <button class="filtro" data-submenu="insumos">Insumos</button>
+  </div>
+
+  <div id="vista-menu-productos">
+    <div class="form-inline">
+      <input type="text" id="nuevo-prod-nombre" placeholder="Nombre del producto" />
+      <select id="nuevo-prod-categoria"></select>
+      <input type="text" inputmode="decimal" id="nuevo-prod-precio" placeholder="Precio" style="width:90px" />
+      <button id="btn-agregar-producto-admin">+ Agregar</button>
+    </div>
+    <div class="form-inline">
+      <input type="text" id="nueva-categoria-nombre" placeholder="Nueva categoría" />
+      <button id="btn-agregar-categoria">+ Agregar categoría</button>
+    </div>
+    <table class="tabla-simple">
+      <thead><tr><th>Producto</th><th>Categoría</th><th class="num">Precio</th><th></th></tr></thead>
+      <tbody id="productos-admin-tabla-body"></tbody>
+    </table>
+  </div>
+
+  <div id="vista-menu-insumos" style="display:none">
+    <div class="form-inline">
+      <input type="text" id="nuevo-insumo-nombre" placeholder="Nombre del insumo" />
+      <input type="text" id="nuevo-insumo-unidad" placeholder="Unidad (kg, pza, l...)" style="width:120px" />
+      <input type="text" inputmode="decimal" id="nuevo-insumo-costo" placeholder="Costo x unidad" style="width:110px" />
+      <button id="btn-agregar-insumo">+ Agregar insumo</button>
+    </div>
+    <table class="tabla-simple">
+      <thead><tr><th>Insumo</th><th>Unidad</th><th class="num">Costo</th><th class="num">Stock aquí</th><th></th></tr></thead>
+      <tbody id="insumos-tabla-body"></tbody>
+    </table>
   </div>
 </div>
 
