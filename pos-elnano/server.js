@@ -55,22 +55,47 @@ async function obtenerPedidoCompleto(pedidoId) {
   return pedido;
 }
 
-// Descuenta (signo -1, al vender) o restaura (signo +1, al cancelar) los insumos
-// de la receta de un producto, para la sucursal donde ocurrió la venta.
-async function ajustarInventarioPorProducto(productoId, cantidadVendida, sucursalId, signo) {
+// Descuenta (signo -1, al vender) o restaura (signo +1, al cancelar) los insumos:
+// - la receta base del producto (por 1 pieza/unidad), escalada por el multiplicador
+//   de la variante elegida (ej. "Orden" = 5 piezas)
+// - los insumos extra que agregue cualquier opción elegida (ej. "Con aguacate", "Extra tocino")
+async function ajustarInventarioPorProducto(productoId, cantidadVendida, sucursalId, signo, opcionesSeleccionadas) {
+  opcionesSeleccionadas = opcionesSeleccionadas || [];
+
+  let multiplicador = 1;
+  opcionesSeleccionadas.forEach((o) => {
+    if (o.tipo === 'variante' && o.multiplicador) multiplicador = Number(o.multiplicador);
+  });
+
   const { rows: receta } = await pool.query(
     'SELECT insumo_id, cantidad FROM producto_insumos WHERE producto_id = $1',
     [productoId]
   );
   for (const r of receta) {
-    const delta = signo * Number(r.cantidad) * Number(cantidadVendida);
-    await pool.query(
-      `INSERT INTO inventario_stock (insumo_id, sucursal_id, stock_actual)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (insumo_id, sucursal_id) DO UPDATE SET stock_actual = inventario_stock.stock_actual + $3`,
-      [r.insumo_id, sucursalId, delta]
-    );
+    const delta = signo * Number(r.cantidad) * multiplicador * Number(cantidadVendida);
+    await ajustarStockInsumo(r.insumo_id, sucursalId, delta);
   }
+
+  const opcionIds = opcionesSeleccionadas.map((o) => o.id).filter(Boolean);
+  if (opcionIds.length) {
+    const { rows: extras } = await pool.query(
+      'SELECT insumo_id, cantidad FROM opcion_insumos WHERE opcion_id = ANY($1)',
+      [opcionIds]
+    );
+    for (const e of extras) {
+      const delta = signo * Number(e.cantidad) * Number(cantidadVendida);
+      await ajustarStockInsumo(e.insumo_id, sucursalId, delta);
+    }
+  }
+}
+
+async function ajustarStockInsumo(insumoId, sucursalId, delta) {
+  await pool.query(
+    `INSERT INTO inventario_stock (insumo_id, sucursal_id, stock_actual)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (insumo_id, sucursal_id) DO UPDATE SET stock_actual = inventario_stock.stock_actual + $3`,
+    [insumoId, sucursalId, delta]
+  );
 }
 
 async function recalcularTotalPedido(pedidoId) {
@@ -276,6 +301,51 @@ app.delete('/api/productos/:id/receta/:insumoId', async (req, res) => {
 });
 
 
+// ---------- Opciones de modificador: multiplicador e insumos extra ----------
+app.patch('/api/opciones/:id', async (req, res) => {
+  const { multiplicador } = req.body;
+  const { rows } = await pool.query(
+    'UPDATE opciones_modificador SET multiplicador = $1 WHERE id = $2 RETURNING *',
+    [multiplicador, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Opción no encontrada' });
+  res.json(rows[0]);
+});
+
+app.get('/api/opciones/:id/insumos', async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT oi.id, oi.insumo_id, oi.cantidad, i.nombre AS insumo_nombre, i.unidad
+     FROM opcion_insumos oi JOIN insumos i ON i.id = oi.insumo_id
+     WHERE oi.opcion_id = $1 ORDER BY i.nombre`,
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
+app.post('/api/opciones/:id/insumos', async (req, res) => {
+  const { insumo_id, cantidad } = req.body;
+  if (!insumo_id || cantidad === undefined) {
+    return res.status(400).json({ error: 'Falta el insumo o la cantidad' });
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO opcion_insumos (opcion_id, insumo_id, cantidad)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (opcion_id, insumo_id) DO UPDATE SET cantidad = EXCLUDED.cantidad
+     RETURNING *`,
+    [req.params.id, insumo_id, cantidad]
+  );
+  res.json(rows[0]);
+});
+
+app.delete('/api/opciones/:id/insumos/:insumoId', async (req, res) => {
+  await pool.query(
+    'DELETE FROM opcion_insumos WHERE opcion_id = $1 AND insumo_id = $2',
+    [req.params.id, req.params.insumoId]
+  );
+  res.json({ ok: true });
+});
+
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono } = req.query;
@@ -360,7 +430,7 @@ app.post('/api/pedidos', async (req, res) => {
 
     // Descuenta el inventario según la receta de cada producto vendido
     for (const it of items) {
-      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, sucursal_id, -1);
+      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, sucursal_id, -1, it.opciones_seleccionadas);
     }
 
     const pedidoCompleto = { ...pedido, items: itemsConNombre };
@@ -480,11 +550,11 @@ app.patch('/api/pedidos/:id/cancelar', async (req, res) => {
   if (!pedido.cancelado) {
     // Devuelve al inventario todo lo que seguía activo en este pedido
     const { rows: itemsActivos } = await pool.query(
-      'SELECT producto_id, cantidad FROM pedido_items WHERE pedido_id = $1 AND cancelado = false',
+      'SELECT producto_id, cantidad, opciones_seleccionadas FROM pedido_items WHERE pedido_id = $1 AND cancelado = false',
       [id]
     );
     for (const it of itemsActivos) {
-      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, pedido.sucursal_id, 1);
+      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, pedido.sucursal_id, 1, it.opciones_seleccionadas);
     }
   }
 
@@ -511,7 +581,7 @@ app.post('/api/pedidos/:id/items', async (req, res) => {
 
     const { rows: pedRows } = await pool.query('SELECT sucursal_id FROM pedidos WHERE id = $1', [id]);
     if (pedRows[0]) {
-      await ajustarInventarioPorProducto(producto_id, cantidad, pedRows[0].sucursal_id, -1);
+      await ajustarInventarioPorProducto(producto_id, cantidad, pedRows[0].sucursal_id, -1, opciones_seleccionadas);
     }
 
     const pedidoCompleto = await obtenerPedidoCompleto(id);
@@ -529,7 +599,7 @@ app.patch('/api/pedido_items/:id/cancelar', async (req, res) => {
   const { id } = req.params;
   try {
     const { rows } = await pool.query(
-      `SELECT pi.pedido_id, pi.producto_id, pi.cantidad, pi.cancelado, p.sucursal_id
+      `SELECT pi.pedido_id, pi.producto_id, pi.cantidad, pi.cancelado, pi.opciones_seleccionadas, p.sucursal_id
        FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id
        WHERE pi.id = $1`,
       [id]
@@ -540,7 +610,7 @@ app.patch('/api/pedido_items/:id/cancelar', async (req, res) => {
     await pool.query('UPDATE pedido_items SET cancelado = true WHERE id = $1', [id]);
 
     if (!item.cancelado) {
-      await ajustarInventarioPorProducto(item.producto_id, item.cantidad, item.sucursal_id, 1);
+      await ajustarInventarioPorProducto(item.producto_id, item.cantidad, item.sucursal_id, 1, item.opciones_seleccionadas);
     }
 
     await recalcularTotalPedido(item.pedido_id);
