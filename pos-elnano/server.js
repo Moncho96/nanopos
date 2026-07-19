@@ -55,6 +55,24 @@ async function obtenerPedidoCompleto(pedidoId) {
   return pedido;
 }
 
+// Descuenta (signo -1, al vender) o restaura (signo +1, al cancelar) los insumos
+// de la receta de un producto, para la sucursal donde ocurrió la venta.
+async function ajustarInventarioPorProducto(productoId, cantidadVendida, sucursalId, signo) {
+  const { rows: receta } = await pool.query(
+    'SELECT insumo_id, cantidad FROM producto_insumos WHERE producto_id = $1',
+    [productoId]
+  );
+  for (const r of receta) {
+    const delta = signo * Number(r.cantidad) * Number(cantidadVendida);
+    await pool.query(
+      `INSERT INTO inventario_stock (insumo_id, sucursal_id, stock_actual)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (insumo_id, sucursal_id) DO UPDATE SET stock_actual = inventario_stock.stock_actual + $3`,
+      [r.insumo_id, sucursalId, delta]
+    );
+  }
+}
+
 async function recalcularTotalPedido(pedidoId) {
   const { rows: sumaRows } = await pool.query(
     `SELECT COALESCE(SUM(cantidad * precio_unitario), 0) AS suma
@@ -81,8 +99,11 @@ app.get('/api/categorias', async (req, res) => {
 });
 
 app.get('/api/productos', async (req, res) => {
+  const { todos } = req.query;
   const { rows: productos } = await pool.query(
-    'SELECT * FROM productos WHERE disponible = true ORDER BY categoria_id, nombre'
+    todos === 'true'
+      ? 'SELECT * FROM productos ORDER BY categoria_id, nombre'
+      : 'SELECT * FROM productos WHERE disponible = true ORDER BY categoria_id, nombre'
   );
   const { rows: grupos } = await pool.query(
     'SELECT * FROM grupos_modificadores ORDER BY producto_id, orden, id'
@@ -110,6 +131,150 @@ app.get('/api/productos', async (req, res) => {
 
   res.json(productos);
 });
+
+// ---------- Administración del menú: categorías ----------
+app.post('/api/categorias', async (req, res) => {
+  const { nombre } = req.body;
+  if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Falta el nombre' });
+  const { rows } = await pool.query('INSERT INTO categorias (nombre) VALUES ($1) RETURNING *', [nombre.trim()]);
+  res.json(rows[0]);
+});
+
+// ---------- Administración del menú: productos ----------
+app.post('/api/productos', async (req, res) => {
+  const { nombre, categoria_id, precio, estacion } = req.body;
+  if (!nombre || !categoria_id || precio === undefined) {
+    return res.status(400).json({ error: 'Faltan datos del producto' });
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO productos (nombre, categoria_id, precio, estacion) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [nombre.trim(), categoria_id, precio, estacion || 'cocina']
+  );
+  res.json(rows[0]);
+});
+
+app.patch('/api/productos/:id', async (req, res) => {
+  const { id } = req.params;
+  const { nombre, categoria_id, precio, disponible, estacion } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE productos SET
+       nombre = COALESCE($1, nombre),
+       categoria_id = COALESCE($2, categoria_id),
+       precio = COALESCE($3, precio),
+       disponible = COALESCE($4, disponible),
+       estacion = COALESCE($5, estacion)
+     WHERE id = $6 RETURNING *`,
+    [nombre, categoria_id, precio, disponible, estacion, id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Producto no encontrado' });
+  res.json(rows[0]);
+});
+
+// "Eliminar" un producto lo oculta del menú (disponible = false) en vez de borrarlo,
+// para no romper el historial de pedidos que ya lo usaron.
+app.delete('/api/productos/:id', async (req, res) => {
+  const { rows } = await pool.query(
+    'UPDATE productos SET disponible = false WHERE id = $1 RETURNING *',
+    [req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Producto no encontrado' });
+  res.json({ ok: true, oculto: true });
+});
+
+// ---------- Insumos ----------
+app.get('/api/insumos', async (req, res) => {
+  const { sucursal_id } = req.query;
+  const { rows } = await pool.query(
+    `SELECT i.*, COALESCE(s.stock_actual, 0) AS stock_actual
+     FROM insumos i
+     LEFT JOIN inventario_stock s ON s.insumo_id = i.id AND s.sucursal_id = $1
+     ORDER BY i.nombre`,
+    [sucursal_id || null]
+  );
+  res.json(rows);
+});
+
+app.post('/api/insumos', async (req, res) => {
+  const { nombre, unidad, costo_unitario } = req.body;
+  if (!nombre || !unidad) return res.status(400).json({ error: 'Falta el nombre o la unidad' });
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO insumos (nombre, unidad, costo_unitario) VALUES ($1,$2,$3) RETURNING *',
+      [nombre.trim(), unidad, costo_unitario || 0]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: 'Ya existe un insumo con ese nombre' });
+  }
+});
+
+app.patch('/api/insumos/:id', async (req, res) => {
+  const { nombre, unidad, costo_unitario } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE insumos SET
+       nombre = COALESCE($1, nombre),
+       unidad = COALESCE($2, unidad),
+       costo_unitario = COALESCE($3, costo_unitario)
+     WHERE id = $4 RETURNING *`,
+    [nombre, unidad, costo_unitario, req.params.id]
+  );
+  res.json(rows[0]);
+});
+
+app.delete('/api/insumos/:id', async (req, res) => {
+  await pool.query('DELETE FROM insumos WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+app.patch('/api/insumos/:id/stock', async (req, res) => {
+  const { sucursal_id, stock_actual } = req.body;
+  if (!sucursal_id || stock_actual === undefined) {
+    return res.status(400).json({ error: 'Falta sucursal_id o stock_actual' });
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO inventario_stock (insumo_id, sucursal_id, stock_actual)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (insumo_id, sucursal_id) DO UPDATE SET stock_actual = $3
+     RETURNING *`,
+    [req.params.id, sucursal_id, stock_actual]
+  );
+  res.json(rows[0]);
+});
+
+// ---------- Recetas (insumos por producto) ----------
+app.get('/api/productos/:id/receta', async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT pi.id, pi.insumo_id, pi.cantidad, i.nombre AS insumo_nombre, i.unidad
+     FROM producto_insumos pi JOIN insumos i ON i.id = pi.insumo_id
+     WHERE pi.producto_id = $1 ORDER BY i.nombre`,
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
+app.post('/api/productos/:id/receta', async (req, res) => {
+  const { insumo_id, cantidad } = req.body;
+  if (!insumo_id || cantidad === undefined) {
+    return res.status(400).json({ error: 'Falta el insumo o la cantidad' });
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO producto_insumos (producto_id, insumo_id, cantidad)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (producto_id, insumo_id) DO UPDATE SET cantidad = EXCLUDED.cantidad
+     RETURNING *`,
+    [req.params.id, insumo_id, cantidad]
+  );
+  res.json(rows[0]);
+});
+
+app.delete('/api/productos/:id/receta/:insumoId', async (req, res) => {
+  await pool.query(
+    'DELETE FROM producto_insumos WHERE producto_id = $1 AND insumo_id = $2',
+    [req.params.id, req.params.insumoId]
+  );
+  res.json({ ok: true });
+});
+
 
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
@@ -192,6 +357,11 @@ app.post('/api/pedidos', async (req, res) => {
     );
 
     await client.query('COMMIT');
+
+    // Descuenta el inventario según la receta de cada producto vendido
+    for (const it of items) {
+      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, sucursal_id, -1);
+    }
 
     const pedidoCompleto = { ...pedido, items: itemsConNombre };
     // Avisa en tiempo real al monitor de cocina de esa sucursal
@@ -302,11 +472,23 @@ app.get('/api/pedidos/:id', async (req, res) => {
 // Cancela un pedido completo (esté pendiente o ya cobrado), por si se equivocan
 app.patch('/api/pedidos/:id/cancelar', async (req, res) => {
   const { id } = req.params;
-  const { rows } = await pool.query(
-    'UPDATE pedidos SET cancelado = true, cancelado_en = now() WHERE id = $1 RETURNING *',
-    [id]
-  );
-  if (!rows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+  const { rows: pedidoRows } = await pool.query('SELECT * FROM pedidos WHERE id = $1', [id]);
+  if (!pedidoRows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
+  const pedido = pedidoRows[0];
+
+  if (!pedido.cancelado) {
+    // Devuelve al inventario todo lo que seguía activo en este pedido
+    const { rows: itemsActivos } = await pool.query(
+      'SELECT producto_id, cantidad FROM pedido_items WHERE pedido_id = $1 AND cancelado = false',
+      [id]
+    );
+    for (const it of itemsActivos) {
+      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, pedido.sucursal_id, 1);
+    }
+  }
+
+  await pool.query('UPDATE pedidos SET cancelado = true, cancelado_en = now() WHERE id = $1', [id]);
   const pedidoCompleto = await obtenerPedidoCompleto(id);
   io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
   res.json(pedidoCompleto);
@@ -326,6 +508,12 @@ app.post('/api/pedidos/:id/items', async (req, res) => {
       [id, producto_id, cantidad, precio_unitario, notas || null, JSON.stringify(opciones_seleccionadas || [])]
     );
     await recalcularTotalPedido(id);
+
+    const { rows: pedRows } = await pool.query('SELECT sucursal_id FROM pedidos WHERE id = $1', [id]);
+    if (pedRows[0]) {
+      await ajustarInventarioPorProducto(producto_id, cantidad, pedRows[0].sucursal_id, -1);
+    }
+
     const pedidoCompleto = await obtenerPedidoCompleto(id);
     io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
     res.json(pedidoCompleto);
@@ -340,13 +528,23 @@ app.post('/api/pedidos/:id/items', async (req, res) => {
 app.patch('/api/pedido_items/:id/cancelar', async (req, res) => {
   const { id } = req.params;
   try {
-    const { rows } = await pool.query('SELECT pedido_id FROM pedido_items WHERE id = $1', [id]);
+    const { rows } = await pool.query(
+      `SELECT pi.pedido_id, pi.producto_id, pi.cantidad, pi.cancelado, p.sucursal_id
+       FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id
+       WHERE pi.id = $1`,
+      [id]
+    );
     if (!rows.length) return res.status(404).json({ error: 'Producto no encontrado en el pedido' });
-    const pedidoId = rows[0].pedido_id;
+    const item = rows[0];
 
     await pool.query('UPDATE pedido_items SET cancelado = true WHERE id = $1', [id]);
-    await recalcularTotalPedido(pedidoId);
-    const pedidoCompleto = await obtenerPedidoCompleto(pedidoId);
+
+    if (!item.cancelado) {
+      await ajustarInventarioPorProducto(item.producto_id, item.cantidad, item.sucursal_id, 1);
+    }
+
+    await recalcularTotalPedido(item.pedido_id);
+    const pedidoCompleto = await obtenerPedidoCompleto(item.pedido_id);
     io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
     res.json(pedidoCompleto);
   } catch (err) {
