@@ -185,8 +185,10 @@ document.querySelectorAll('#nuevo-pedido-menu button').forEach((btn) => {
 function abrirOverlayNuevo(tipo) {
   ticketState = { modo: 'nuevo', tipo, pedidoId: null, carrito: [], costoEnvio: 0, soloLectura: false };
   document.getElementById('overlay-titulo').textContent = 'Nuevo pedido — ' + TIPO_LABELS[tipo];
+  document.querySelector('.overlay-body').classList.remove('vista-productos');
   prepararCamposCliente();
   mostrarControlesTicket(true);
+  document.getElementById('btn-mostrar-productos').style.display = '';
   document.getElementById('btn-t-cancelar').textContent = 'Cancelar';
   document.getElementById('btn-t-aceptar').style.display = 'block';
   document.getElementById('btn-t-pago').style.display = 'block';
@@ -201,6 +203,7 @@ async function abrirOverlayEditar(pedidoId) {
   const pedido = await fetch(`/api/pedidos/${pedidoId}`).then((r) => r.json());
   ticketState = { modo: 'editar', tipo: pedido.tipo, pedidoId: pedido.id, pedidoData: pedido, soloLectura: pedido.pagado };
   document.getElementById('overlay-titulo').textContent = `Pedido #${pedido.id}` + (pedido.pagado ? ' — cobrado' : '');
+  document.querySelector('.overlay-body').classList.remove('vista-productos');
   prepararCamposCliente();
   document.getElementById('ticket-cliente-nombre').value = pedido.cliente_nombre || '';
   document.getElementById('ticket-cliente-nombre').disabled = true;
@@ -208,6 +211,7 @@ async function abrirOverlayEditar(pedidoId) {
   document.getElementById('ticket-cliente-telefono').disabled = true;
 
   mostrarControlesTicket(!ticketState.soloLectura);
+  document.getElementById('btn-mostrar-productos').style.display = ticketState.soloLectura ? 'none' : '';
   document.getElementById('btn-t-cancelar').textContent = 'Cerrar';
   document.getElementById('btn-t-aceptar').style.display = 'none';
   document.getElementById('btn-t-pago').style.display = ticketState.soloLectura ? 'none' : 'block';
@@ -220,8 +224,17 @@ async function abrirOverlayEditar(pedidoId) {
 }
 
 function mostrarControlesTicket(mostrar) {
-  document.getElementById('cat-sidebar').style.display = mostrar ? 'block' : 'none';
-  document.querySelector('.productos-area').style.display = mostrar ? 'block' : 'none';
+  const sidebar = document.getElementById('cat-sidebar');
+  const area = document.querySelector('.productos-area');
+  if (mostrar) {
+    // Sin estilo en línea: deja que el CSS (y el responsivo de móvil) decida cuándo mostrarlos
+    sidebar.style.display = '';
+    area.style.display = '';
+  } else {
+    // Pedido ya cobrado: ocultarlos siempre, sin importar el tamaño de pantalla
+    sidebar.style.display = 'none';
+    area.style.display = 'none';
+  }
 }
 
 function prepararCamposCliente() {
@@ -528,6 +541,13 @@ async function crearPedidoDesdeTicket() {
 }
 
 // ==================== MODAL DE MODIFICADORES ====================
+
+document.getElementById('btn-mostrar-productos').addEventListener('click', () => {
+  document.querySelector('.overlay-body').classList.add('vista-productos');
+});
+document.getElementById('btn-volver-ticket').addEventListener('click', () => {
+  document.querySelector('.overlay-body').classList.remove('vista-productos');
+});
 
 function abrirModalModificadores(producto, grupos, onAgregar) {
   onAgregar =

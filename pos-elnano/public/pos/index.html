@@ -103,6 +103,37 @@
   .btn-t-aceptar { background: #1a7d3a; color: white; }
   #ticket-status { text-align: center; font-size: 12px; padding: 6px 0 0; color: #b8232f; }
 
+  .btn-mobile-productos { display: none; }
+  .btn-mobile-volver { display: none; }
+
+  /* ---------- Responsive: en vertical/celular, pantallas completas tipo asistente ---------- */
+  @media (max-width: 700px) {
+    .overlay-body { flex-direction: column; }
+
+    .btn-mobile-productos {
+      display: block; width: calc(100% - 24px); margin: 12px; padding: 13px;
+      background: #0056b3; color: white; border: none; border-radius: 8px;
+      font-weight: bold; font-size: 14px; cursor: pointer;
+    }
+    .btn-mobile-volver {
+      display: flex; align-items: center; gap: 6px; width: 100%; padding: 12px;
+      background: white; border: none; border-bottom: 1px solid #eee; font-weight: 600;
+      font-size: 14px; cursor: pointer; color: #333;
+    }
+
+    #cat-sidebar { width: 100%; flex-direction: row; overflow-x: auto; overflow-y: hidden; border-right: none; border-bottom: 1px solid #eee; flex-shrink: 0; }
+    .cat-sidebar-item { flex: 0 0 auto; border-left: none; border-bottom: 3px solid transparent; padding: 10px 14px; white-space: nowrap; }
+    .cat-sidebar-item.active { border-left: none; border-bottom-color: #b8232f; }
+
+    .ticket-panel { width: 100%; border-left: none; }
+
+    /* Por default se ve el ticket. El botón "+ Productos" cambia al catálogo */
+    #cat-sidebar, .productos-area { display: none; }
+    .overlay-body.vista-productos #cat-sidebar { display: flex; }
+    .overlay-body.vista-productos .productos-area { display: block; }
+    .overlay-body.vista-productos .ticket-panel { display: none; }
+  }
+
   /* ---------- Modales genéricos (modificadores, cobro) ---------- */
   .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: flex-end; justify-content: center; z-index: 300; }
   @media (min-width: 600px) { .modal-overlay { align-items: center; } }
@@ -203,11 +234,13 @@
   <div class="overlay-body">
     <div class="cat-sidebar" id="cat-sidebar"></div>
     <div class="productos-area">
+      <button class="btn-mobile-volver" id="btn-volver-ticket">← Volver al pedido</button>
       <input type="text" class="buscador" id="buscador-producto" placeholder="Buscar producto..." />
       <div class="productos-grid-overlay" id="productos-grid-overlay"></div>
     </div>
     <div class="ticket-panel">
       <div class="ticket-header">
+        <button class="btn-mobile-productos" id="btn-mostrar-productos">+ Productos</button>
         <input type="text" id="ticket-cliente-nombre" placeholder="Nombre del cliente * (obligatorio)" />
         <input type="tel" id="ticket-cliente-telefono" placeholder="Teléfono (opcional)" />
         <input type="text" id="ticket-cliente-direccion" placeholder="Dirección (domicilio)" style="display:none" />
