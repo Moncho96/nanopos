@@ -9,6 +9,22 @@ const CATEGORIA_EMOJI = {
   'Nano Smash': '🍔',
 };
 
+const CORTE_CUTOFF_HORAS = 6; // debe coincidir con CORTE_CUTOFF_HORAS en server.js
+
+// El "día de negocio" no cambia a medianoche: si todavía es antes de la hora de
+// corte (ej. antes de las 6am), sigue contando como el día anterior — así una
+// venta de la 1am de un turno que empezó a las 6pm no se va al día siguiente.
+function fechaNegocioActual() {
+  const ahora = new Date();
+  if (ahora.getHours() < CORTE_CUTOFF_HORAS) {
+    ahora.setDate(ahora.getDate() - 1);
+  }
+  const y = ahora.getFullYear();
+  const m = String(ahora.getMonth() + 1).padStart(2, '0');
+  const d = String(ahora.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 const state = {
   sucursales: [],
   categorias: [],
@@ -145,7 +161,7 @@ document.getElementById('resumen-toggle').addEventListener('click', () => {
 
 async function cargarResumenCaja() {
   const sucursalId = document.getElementById('sucursal-select').value;
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = fechaNegocioActual();
   const corte = await fetch(`/api/corte?sucursal_id=${sucursalId}&fecha=${hoy}`).then((r) => r.json());
 
   const panel = document.getElementById('resumen-panel');
@@ -843,7 +859,7 @@ document.getElementById('btn-cerrar-envios').addEventListener('click', () => doc
 
 // ==================== CORTE DE CAJA ====================
 
-document.getElementById('corte-fecha').value = new Date().toISOString().slice(0, 10);
+document.getElementById('corte-fecha').value = fechaNegocioActual();
 document.getElementById('btn-cargar-corte').addEventListener('click', cargarCorte);
 document.getElementById('btn-agregar-gasto').addEventListener('click', agregarGasto);
 document.getElementById('gasto-monto').addEventListener('input', (e) => {
