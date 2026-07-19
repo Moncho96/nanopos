@@ -34,7 +34,6 @@ const state = {
 };
 
 let tipoActivo = 'todos';
-let filtroEstado = 'pendientes';
 let ticketState = null; // ver abrirOverlayNuevo / abrirOverlayEditar
 
 // ==================== CARGA INICIAL ====================
@@ -57,7 +56,7 @@ async function cargarInicial() {
   cargarPedidosYContar();
 }
 
-// ==================== TABS DE TIPO + FILTROS ====================
+// ==================== TABS DE TIPO ====================
 
 document.querySelectorAll('.tipo-tab').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -68,23 +67,13 @@ document.querySelectorAll('.tipo-tab').forEach((btn) => {
   });
 });
 
-document.querySelectorAll('.filtro').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    filtroEstado = btn.dataset.filtro;
-    document.querySelectorAll('.filtro').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
-    cargarPedidosYContar();
-  });
-});
-
-// ==================== LISTA DE PEDIDOS ====================
+// ==================== LISTA DE PEDIDOS (solo pendientes, no cancelados) ====================
 
 async function cargarPedidosYContar() {
   const sucursalId = document.getElementById('sucursal-select').value;
   if (!sucursalId) return;
 
-  // Contadores de las pestañas: siempre sobre lo pendiente de cobrar
-  const pendientes = await fetch(`/api/pedidos?sucursal_id=${sucursalId}&pagado=false`).then((r) => r.json());
+  const pendientes = await fetch(`/api/pedidos?sucursal_id=${sucursalId}&pagado=false&cancelado=false`).then((r) => r.json());
   const counts = { mesa: 0, para_llevar: 0, domicilio: 0 };
   pendientes.forEach((p) => {
     if (counts[p.tipo] !== undefined) counts[p.tipo]++;
@@ -94,13 +83,7 @@ async function cargarPedidosYContar() {
   document.getElementById('count-domicilio').textContent = counts.domicilio;
   document.getElementById('count-todos').textContent = pendientes.length;
 
-  // Lista visible, según filtro de estado y tipo activo
-  let url = `/api/pedidos?sucursal_id=${sucursalId}`;
-  if (filtroEstado === 'pendientes') url += '&pagado=false';
-  if (filtroEstado === 'cobrados') url += '&pagado=true';
-  let pedidos = await fetch(url).then((r) => r.json());
-  if (tipoActivo !== 'todos') pedidos = pedidos.filter((p) => p.tipo === tipoActivo);
-
+  const pedidos = tipoActivo === 'todos' ? pendientes : pendientes.filter((p) => p.tipo === tipoActivo);
   renderListaPedidos(pedidos);
 
   // Si el resumen de caja está abierto, refréscalo también
@@ -126,25 +109,33 @@ function renderListaPedidos(pedidos) {
 
 function renderPedidoRow(pedido) {
   const hora = new Date(pedido.creado_en).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+  const fechaCorta = new Date(pedido.creado_en).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' });
   const itemsTexto = (pedido.items || [])
     .filter((it) => !it.cancelado)
     .map((it) => `${it.cantidad}x ${it.producto_nombre}`)
     .join(', ');
   const tipoLabel = TIPO_LABELS[pedido.tipo] || pedido.tipo;
 
+  let badgeEstado;
+  if (pedido.cancelado) {
+    badgeEstado = `<span class="badge badge-pendiente" style="background:#eee;color:#888">❌ Cancelado</span>`;
+  } else if (pedido.pagado) {
+    badgeEstado = `<span class="badge badge-pagado">✅ ${METODO_LABELS[pedido.metodo_pago] || pedido.metodo_pago}</span>`;
+  } else {
+    badgeEstado = `<span class="badge badge-pendiente">⏳ Por cobrar</span>`;
+  }
+
   return `
     <div class="pedido-row" data-id="${pedido.id}">
       <div class="pedido-row-top">
         <span class="pedido-row-id">#${pedido.id} <span class="badge badge-${pedido.tipo}">${tipoLabel}</span></span>
-        <span class="pedido-row-hora">${hora}</span>
+        <span class="pedido-row-hora">${fechaCorta} · ${hora}</span>
       </div>
       <div class="pedido-row-cliente">👤 ${pedido.cliente_nombre || ''}</div>
       <div class="pedido-row-items">${itemsTexto}</div>
       <div class="pedido-row-bottom">
         <span class="pedido-row-total">$${Number(pedido.total).toFixed(2)}</span>
-        <span class="badge ${pedido.pagado ? 'badge-pagado' : 'badge-pendiente'}">
-          ${pedido.pagado ? '✅ ' + (METODO_LABELS[pedido.metodo_pago] || pedido.metodo_pago) : '⏳ Por cobrar'}
-        </span>
+        ${badgeEstado}
       </div>
     </div>`;
 }
@@ -217,7 +208,7 @@ function abrirOverlayNuevo(tipo) {
 
 async function abrirOverlayEditar(pedidoId) {
   const pedido = await fetch(`/api/pedidos/${pedidoId}`).then((r) => r.json());
-  ticketState = { modo: 'editar', tipo: pedido.tipo, pedidoId: pedido.id, pedidoData: pedido, soloLectura: pedido.pagado };
+  ticketState = { modo: 'editar', tipo: pedido.tipo, pedidoId: pedido.id, pedidoData: pedido, soloLectura: pedido.pagado || pedido.cancelado };
   document.getElementById('overlay-titulo').textContent = `Pedido #${pedido.id}` + (pedido.pagado ? ' — cobrado' : '');
   document.querySelector('.overlay-body').classList.remove('vista-productos');
   prepararCamposCliente();
@@ -232,12 +223,41 @@ async function abrirOverlayEditar(pedidoId) {
   document.getElementById('btn-t-aceptar').style.display = 'none';
   document.getElementById('btn-t-pago').style.display = ticketState.soloLectura ? 'none' : 'block';
 
+  const bannerCancelado = document.getElementById('ticket-cancelado-banner');
+  const accionesExtra = document.getElementById('ticket-acciones-extra');
+  const btnCambiarMetodo = document.getElementById('btn-cambiar-metodo');
+  const btnCancelarCompleto = document.getElementById('btn-cancelar-pedido-completo');
+
+  bannerCancelado.style.display = pedido.cancelado ? 'block' : 'none';
+  accionesExtra.style.display = pedido.cancelado ? 'none' : 'flex';
+  btnCambiarMetodo.style.display = pedido.pagado && !pedido.cancelado ? 'block' : 'none';
+  btnCancelarCompleto.style.display = pedido.cancelado ? 'none' : 'block';
+
+  if (pedido.cancelado) {
+    document.getElementById('btn-t-pago').style.display = 'none';
+  }
+
   state.categoriaActivaOverlay = state.categorias[0]?.id ?? null;
   renderCatSidebarOverlay();
   renderProductosOverlay();
   renderTicketPanel();
   document.getElementById('overlay-pedido').classList.add('abierto');
 }
+
+document.getElementById('btn-cancelar-pedido-completo').addEventListener('click', async () => {
+  if (!confirm(`¿Cancelar el pedido #${ticketState.pedidoId} por completo? No se puede deshacer.`)) return;
+  await fetch(`/api/pedidos/${ticketState.pedidoId}/cancelar`, { method: 'PATCH' });
+  ticketState = null;
+  document.getElementById('overlay-pedido').classList.remove('abierto');
+  cargarPedidosYContar();
+  if (document.getElementById('overlay-historial').classList.contains('abierto')) cargarHistorial();
+});
+
+document.getElementById('btn-cambiar-metodo').addEventListener('click', () => {
+  const pedido = ticketState.pedidoData;
+  document.getElementById('overlay-pedido').classList.remove('abierto');
+  abrirModalCobroDirecto(pedido, true);
+});
 
 function mostrarControlesTicket(mostrar) {
   const sidebar = document.getElementById('cat-sidebar');
@@ -304,6 +324,7 @@ function cerrarOverlayPedido() {
   document.getElementById('overlay-pedido').classList.remove('abierto');
   ticketState = null;
   cargarPedidosYContar();
+  if (document.getElementById('overlay-historial').classList.contains('abierto')) cargarHistorial();
 }
 
 // ---------- Categorías y productos dentro del overlay ----------
@@ -688,9 +709,13 @@ function abrirModalModificadores(producto, grupos, onAgregar) {
 let pagosEnCurso = [];
 let pedidoEnCobro = null;
 
-function abrirModalCobroDirecto(pedido) {
+function abrirModalCobroDirecto(pedido, esCambio) {
   pedidoEnCobro = pedido;
-  pagosEnCurso = [{ metodo: 'efectivo', monto: Number(pedido.total).toFixed(2) }];
+  if (esCambio && pedido.pagos && pedido.pagos.length) {
+    pagosEnCurso = pedido.pagos.map((p) => ({ metodo: p.metodo, monto: Number(p.monto).toFixed(2) }));
+  } else {
+    pagosEnCurso = [{ metodo: 'efectivo', monto: Number(pedido.total).toFixed(2) }];
+  }
   renderModalCobro();
 }
 
@@ -831,6 +856,7 @@ async function confirmarCobro(filasCalculadas) {
     }
     cerrarModalCobro();
     cargarPedidosYContar();
+    if (document.getElementById('overlay-historial').classList.contains('abierto')) cargarHistorial();
   } catch (err) {
     alert('No se pudo registrar el cobro, revisa tu conexión.');
     btn.disabled = false;
@@ -844,6 +870,11 @@ document.getElementById('btn-menu').addEventListener('click', () => document.get
 document.getElementById('drawer-overlay').addEventListener('click', (e) => {
   if (e.target.id === 'drawer-overlay') document.getElementById('drawer-overlay').classList.remove('abierto');
 });
+document.getElementById('btn-abrir-historial').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-historial').classList.add('abierto');
+  cargarHistorial();
+});
 document.getElementById('btn-abrir-corte').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-corte').classList.add('abierto');
@@ -854,6 +885,7 @@ document.getElementById('btn-abrir-envios').addEventListener('click', () => {
   document.getElementById('overlay-envios').classList.add('abierto');
   cargarEnvios();
 });
+document.getElementById('btn-cerrar-historial').addEventListener('click', () => document.getElementById('overlay-historial').classList.remove('abierto'));
 document.getElementById('btn-cerrar-corte').addEventListener('click', () => document.getElementById('overlay-corte').classList.remove('abierto'));
 document.getElementById('btn-cerrar-envios').addEventListener('click', () => document.getElementById('overlay-envios').classList.remove('abierto'));
 
@@ -1073,3 +1105,48 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== HISTORIAL DE PEDIDOS ====================
+
+let filtroHistorial = 'todos';
+
+document.getElementById('historial-fecha-desde').value = fechaNegocioActual();
+document.getElementById('historial-fecha-hasta').value = fechaNegocioActual();
+document.getElementById('btn-buscar-historial').addEventListener('click', cargarHistorial);
+
+document.querySelectorAll('[data-filtro-hist]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    filtroHistorial = btn.dataset.filtroHist;
+    document.querySelectorAll('[data-filtro-hist]').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    cargarHistorial();
+  });
+});
+
+async function cargarHistorial() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  const desde = document.getElementById('historial-fecha-desde').value;
+  const hasta = document.getElementById('historial-fecha-hasta').value;
+
+  let url = `/api/pedidos?sucursal_id=${sucursalId}`;
+  if (desde) url += `&fecha_desde=${desde}`;
+  if (hasta) url += `&fecha_hasta=${hasta}`;
+  if (filtroHistorial === 'pendientes') url += '&pagado=false&cancelado=false';
+  if (filtroHistorial === 'cobrados') url += '&pagado=true&cancelado=false';
+  if (filtroHistorial === 'cancelados') url += '&cancelado=true';
+
+  const pedidos = await fetch(url).then((r) => r.json());
+
+  const cont = document.getElementById('lista-historial');
+  const sinHistorial = document.getElementById('sin-historial');
+  if (!pedidos.length) {
+    cont.innerHTML = '';
+    sinHistorial.style.display = 'block';
+    return;
+  }
+  sinHistorial.style.display = 'none';
+  cont.innerHTML = pedidos.map((p) => renderPedidoRow(p)).join('');
+  cont.querySelectorAll('.pedido-row').forEach((el) => {
+    el.addEventListener('click', () => abrirOverlayEditar(Number(el.dataset.id)));
+  });
+}
