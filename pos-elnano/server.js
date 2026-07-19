@@ -346,6 +346,61 @@ app.delete('/api/opciones/:id/insumos/:insumoId', async (req, res) => {
 });
 
 
+// ---------- Conteo físico de inventario ----------
+app.post('/api/conteos', async (req, res) => {
+  const { sucursal_id, fecha, conteos } = req.body; // conteos: [{ insumo_id, contado }]
+  if (!sucursal_id || !conteos || !conteos.length) {
+    return res.status(400).json({ error: 'Faltan datos del conteo' });
+  }
+
+  const resumen = [];
+  for (const c of conteos) {
+    if (c.contado === '' || c.contado === null || c.contado === undefined) continue;
+
+    const { rows } = await pool.query(
+      `SELECT i.nombre, i.unidad, COALESCE(s.stock_actual, 0) AS teorico
+       FROM insumos i
+       LEFT JOIN inventario_stock s ON s.insumo_id = i.id AND s.sucursal_id = $1
+       WHERE i.id = $2`,
+      [sucursal_id, c.insumo_id]
+    );
+    if (!rows.length) continue;
+
+    const teorico = Number(rows[0].teorico);
+    const contado = Number(c.contado);
+    const diferencia = Number((contado - teorico).toFixed(3));
+    resumen.push({ insumo_id: c.insumo_id, nombre: rows[0].nombre, unidad: rows[0].unidad, teorico, contado, diferencia });
+
+    // El conteo físico corrige el stock del sistema hacia adelante
+    await pool.query(
+      `INSERT INTO inventario_stock (insumo_id, sucursal_id, stock_actual)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (insumo_id, sucursal_id) DO UPDATE SET stock_actual = $3`,
+      [c.insumo_id, sucursal_id, contado]
+    );
+  }
+
+  if (!resumen.length) {
+    return res.status(400).json({ error: 'No se capturó ningún conteo' });
+  }
+
+  const { rows: guardado } = await pool.query(
+    `INSERT INTO conteos_inventario (sucursal_id, fecha, resumen) VALUES ($1,$2,$3) RETURNING *`,
+    [sucursal_id, fecha, JSON.stringify(resumen)]
+  );
+  res.json(guardado[0]);
+});
+
+app.get('/api/conteos', async (req, res) => {
+  const { sucursal_id } = req.query;
+  const { rows } = await pool.query(
+    'SELECT * FROM conteos_inventario WHERE sucursal_id = $1 ORDER BY creado_en DESC LIMIT 20',
+    [sucursal_id]
+  );
+  res.json(rows);
+});
+
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono } = req.query;
