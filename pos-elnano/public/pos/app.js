@@ -1166,33 +1166,55 @@ document.getElementById('btn-agregar-fila-compra').addEventListener('click', () 
 document.getElementById('btn-guardar-compra').addEventListener('click', guardarCompra);
 
 // Reduce el tamaño de la foto antes de mandarla (las fotos de celular pueden pesar
-// varios MB, y hay un límite de tamaño para las imágenes que recibe Claude)
-function comprimirImagenABase64(archivo, maxDimension, calidad) {
+// varios MB o tener resolución muy alta, y hay un límite de tamaño para las imágenes
+// que recibe Claude). Usa createImageBitmap cuando está disponible porque es mucho
+// más eficiente en memoria que cargar la foto completa antes de comprimirla.
+async function comprimirImagenABase64(archivo, maxDimension, calidad) {
+  function escalar(width, height) {
+    if (width > maxDimension || height > maxDimension) {
+      if (width > height) {
+        height = Math.round(height * (maxDimension / width));
+        width = maxDimension;
+      } else {
+        width = Math.round(width * (maxDimension / height));
+        height = maxDimension;
+      }
+    }
+    return { width, height };
+  }
+
+  if (window.createImageBitmap) {
+    try {
+      const bitmap = await createImageBitmap(archivo);
+      const { width, height } = escalar(bitmap.width, bitmap.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
+      return canvas.toDataURL('image/jpeg', calidad).split(',')[1];
+    } catch (err) {
+      console.warn('createImageBitmap falló, probando con el método alterno:', err);
+    }
+  }
+
+  // Método alterno para navegadores que no soportan createImageBitmap (o si falló)
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        let { width, height } = img;
-        if (width > maxDimension || height > maxDimension) {
-          if (width > height) {
-            height = Math.round(height * (maxDimension / width));
-            width = maxDimension;
-          } else {
-            width = Math.round(width * (maxDimension / height));
-            height = maxDimension;
-          }
-        }
+        const { width, height } = escalar(img.width, img.height);
         const canvas = document.createElement('canvas');
         canvas.width = width;
         canvas.height = height;
         canvas.getContext('2d').drawImage(img, 0, 0, width, height);
         resolve(canvas.toDataURL('image/jpeg', calidad).split(',')[1]);
       };
-      img.onerror = () => reject(new Error('No se pudo leer la imagen'));
+      img.onerror = () => reject(new Error('El navegador no pudo abrir esta imagen'));
       img.src = e.target.result;
     };
-    reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo (puede estar dañado o ser muy pesado)'));
     reader.readAsDataURL(archivo);
   });
 }
