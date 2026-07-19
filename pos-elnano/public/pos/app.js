@@ -1338,9 +1338,7 @@ let insumosCatalogoCache = null;
 
 async function abrirModalReceta(productoId) {
   const producto = state.productos.find((p) => p.id === productoId);
-  if (!insumosCatalogoCache) {
-    insumosCatalogoCache = await fetch('/api/insumos').then((r) => r.json());
-  }
+  insumosCatalogoCache = await fetch('/api/insumos').then((r) => r.json());
   const receta = await fetch(`/api/productos/${productoId}/receta`).then((r) => r.json());
   renderModalReceta(producto, receta);
 }
