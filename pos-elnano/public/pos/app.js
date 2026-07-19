@@ -85,9 +85,6 @@ async function cargarPedidosYContar() {
 
   const pedidos = tipoActivo === 'todos' ? pendientes : pendientes.filter((p) => p.tipo === tipoActivo);
   renderListaPedidos(pedidos);
-
-  // Si el resumen de caja está abierto, refréscalo también
-  if (document.getElementById('resumen-toggle').classList.contains('abierto')) cargarResumenCaja();
 }
 
 function renderListaPedidos(pedidos) {
