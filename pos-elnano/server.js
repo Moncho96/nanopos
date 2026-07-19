@@ -431,6 +431,145 @@ app.post('/api/clientes', async (req, res) => {
 });
 
 // ---------- Pedidos ----------
+// ---------- Importar historial de otros puntos de venta ----------
+// Recibe filas ya parseadas del CSV (una fila = un producto dentro de un pedido).
+// Agrupa por pedido_externo+fecha+sucursal para reconstruir cada pedido completo.
+// A propósito NO descuenta inventario (es venta que ya pasó antes de este sistema)
+// ni avisa a cocina (son pedidos históricos, no en curso).
+app.post('/api/importar-historico', async (req, res) => {
+  const { filas } = req.body;
+  if (!filas || !filas.length) {
+    return res.status(400).json({ error: 'No se recibieron filas' });
+  }
+
+  const { rows: sucursales } = await pool.query('SELECT * FROM sucursales');
+  const sucursalPorNombre = {};
+  sucursales.forEach((s) => {
+    sucursalPorNombre[s.nombre.trim().toLowerCase()] = s.id;
+  });
+
+  const { rows: productos } = await pool.query('SELECT * FROM productos');
+  const productoPorNombre = {};
+  productos.forEach((p) => {
+    productoPorNombre[p.nombre.trim().toLowerCase()] = p;
+  });
+
+  const { rows: opciones } = await pool.query(
+    `SELECT om.*, gm.producto_id FROM opciones_modificador om JOIN grupos_modificadores gm ON gm.id = om.grupo_id`
+  );
+
+  const TIPO_MAP = {
+    mesa: 'mesa', mostrador: 'mesa', local: 'mesa', 'en el local': 'mesa',
+    llevar: 'para_llevar', 'para llevar': 'para_llevar', 'para_llevar': 'para_llevar',
+    domicilio: 'domicilio', delivery: 'domicilio', envio: 'domicilio', 'a domicilio': 'domicilio',
+  };
+  const METODOS_VALIDOS = ['efectivo', 'tarjeta', 'transferencia'];
+
+  const grupos = {};
+  filas.forEach((f, idx) => {
+    const claveGrupo = `${f.sucursal}|${f.fecha}|${f.pedido_externo || 'fila' + idx}`;
+    if (!grupos[claveGrupo]) grupos[claveGrupo] = { meta: f, items: [] };
+    grupos[claveGrupo].items.push(f);
+  });
+
+  const errores = [];
+  let pedidosCreados = 0;
+
+  for (const clave of Object.keys(grupos)) {
+    const grupo = grupos[clave];
+    const meta = grupo.meta;
+    const sucursalId = sucursalPorNombre[(meta.sucursal || '').trim().toLowerCase()];
+    if (!sucursalId) {
+      errores.push(`Sucursal no encontrada: "${meta.sucursal}" (pedido ${meta.pedido_externo})`);
+      continue;
+    }
+    if (!meta.fecha) {
+      errores.push(`Falta la fecha (pedido ${meta.pedido_externo})`);
+      continue;
+    }
+
+    const itemsValidos = [];
+    for (const f of grupo.items) {
+      const producto = productoPorNombre[(f.producto || '').trim().toLowerCase()];
+      if (!producto) {
+        errores.push(`Producto no encontrado: "${f.producto}" (pedido ${f.pedido_externo})`);
+        continue;
+      }
+      let precio = f.precio_unitario ? Number(f.precio_unitario) : Number(producto.precio);
+      let opcionesSel = [];
+      if (f.variante && f.variante.trim()) {
+        const opcion = opciones.find(
+          (o) => o.producto_id === producto.id && o.nombre.trim().toLowerCase() === f.variante.trim().toLowerCase()
+        );
+        if (opcion) {
+          precio = f.precio_unitario ? Number(f.precio_unitario) : Number(opcion.precio);
+          opcionesSel = [
+            {
+              id: opcion.id,
+              nombre: opcion.nombre,
+              precio: Number(opcion.precio),
+              tipo: 'variante',
+              multiplicador: Number(opcion.multiplicador) || 1,
+            },
+          ];
+        } else {
+          errores.push(`Variante no encontrada: "${f.variante}" para "${f.producto}" (pedido ${f.pedido_externo})`);
+        }
+      }
+      itemsValidos.push({
+        producto_id: producto.id,
+        cantidad: Number(f.cantidad) || 1,
+        precio_unitario: precio,
+        opciones_seleccionadas: opcionesSel,
+      });
+    }
+
+    if (!itemsValidos.length) continue;
+
+    const total = itemsValidos.reduce((s, it) => s + it.cantidad * it.precio_unitario, 0);
+    const fechaHora = `${meta.fecha} ${meta.hora || '12:00'}:00`;
+    const tipo = TIPO_MAP[(meta.tipo || '').trim().toLowerCase()] || 'mesa';
+    const metodoPago = METODOS_VALIDOS.includes((meta.metodo_pago || '').trim().toLowerCase())
+      ? meta.metodo_pago.trim().toLowerCase()
+      : 'efectivo';
+    const clienteNombre = (meta.cliente_nombre && meta.cliente_nombre.trim()) || 'Cliente histórico';
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const pedidoRes = await client.query(
+        `INSERT INTO pedidos (sucursal_id, cliente_nombre, tipo, total, pagado, metodo_pago, estado, pagado_en, creado_en)
+         VALUES ($1,$2,$3,$4,true,$5,'entregado',$6,$6) RETURNING id`,
+        [sucursalId, clienteNombre, tipo, total, metodoPago, fechaHora]
+      );
+      const pedidoId = pedidoRes.rows[0].id;
+
+      for (const it of itemsValidos) {
+        await client.query(
+          `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, opciones_seleccionadas)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [pedidoId, it.producto_id, it.cantidad, it.precio_unitario, JSON.stringify(it.opciones_seleccionadas)]
+        );
+      }
+
+      await client.query(
+        `INSERT INTO pagos (pedido_id, metodo, monto, creado_en) VALUES ($1,$2,$3,$4)`,
+        [pedidoId, metodoPago, total, fechaHora]
+      );
+
+      await client.query('COMMIT');
+      pedidosCreados++;
+    } catch (err) {
+      await client.query('ROLLBACK');
+      errores.push(`Error guardando pedido ${meta.pedido_externo}: ${err.message}`);
+    } finally {
+      client.release();
+    }
+  }
+
+  res.json({ pedidosCreados, errores });
+});
+
 app.post('/api/pedidos', async (req, res) => {
   const { sucursal_id, cliente_id, cliente_nombre, tipo, notas, items, costo_envio } = req.body;
   if (!sucursal_id || !items || !items.length) {
