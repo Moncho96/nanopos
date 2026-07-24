@@ -353,6 +353,13 @@ function renderCatSidebarOverlay() {
 
 document.getElementById('buscador-producto').addEventListener('input', renderProductosOverlay);
 
+function visualProductoTile(producto, categoriaNombre) {
+  if (producto.imagen) {
+    return `<img src="${producto.imagen}" style="width:100%;height:56px;object-fit:cover;border-radius:8px;margin-bottom:6px" />`;
+  }
+  return `<div class="emoji">${CATEGORIA_EMOJI[categoriaNombre] || '🍴'}</div>`;
+}
+
 function renderProductosOverlay() {
   const cont = document.getElementById('productos-grid-overlay');
   const busqueda = document.getElementById('buscador-producto').value.trim().toLowerCase();
@@ -368,7 +375,7 @@ function renderProductosOverlay() {
     .map(
       (p) => `
       <div class="prod-tile" data-id="${p.id}">
-        <div class="emoji">${CATEGORIA_EMOJI[categoriaPorId[p.categoria_id]] || '🍴'}</div>
+        ${visualProductoTile(p, categoriaPorId[p.categoria_id])}
         <div class="nombre">${p.nombre}</div>
         <div class="precio">$${Number(p.precio).toFixed(2)}</div>
       </div>`
@@ -1807,6 +1814,14 @@ function renderProductosAdmin() {
     .map(
       (p) => `
     <tr style="opacity:${p.disponible ? '1' : '0.5'}">
+      <td>
+        ${
+          p.imagen
+            ? `<img src="${p.imagen}" class="prod-thumb-img" data-id="${p.id}" style="width:44px;height:44px;object-fit:cover;border-radius:8px;cursor:pointer" title="Cambiar foto" />`
+            : `<button class="btn-eliminar-fila prod-thumb-btn" data-id="${p.id}" title="Subir foto" style="font-size:20px">📷</button>`
+        }
+        <input type="file" accept="image/*" class="prod-imagen-input" data-id="${p.id}" style="display:none" />
+      </td>
       <td><input type="text" class="prod-admin-nombre" data-id="${p.id}" value="${p.nombre}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
       <td>
         <select class="prod-admin-categoria" data-id="${p.id}" style="padding:6px;border-radius:6px;border:1px solid #ddd">
@@ -1823,6 +1838,15 @@ function renderProductosAdmin() {
     )
     .join('');
 
+  document.querySelectorAll('.prod-thumb-img, .prod-thumb-btn').forEach((el) => {
+    el.addEventListener('click', () => {
+      document.querySelector(`.prod-imagen-input[data-id="${el.dataset.id}"]`).click();
+    });
+  });
+  document.querySelectorAll('.prod-imagen-input').forEach((input) => {
+    input.addEventListener('change', () => subirImagenProducto(Number(input.dataset.id), input));
+  });
+
   document.querySelectorAll('[data-guardar]').forEach((btn) => {
     btn.addEventListener('click', () => guardarProductoAdmin(Number(btn.dataset.guardar)));
   });
@@ -1836,6 +1860,73 @@ function renderProductosAdmin() {
     el.addEventListener('input', () => {
       el.value = el.value.replace(/[^0-9.]/g, '');
     });
+  });
+}
+
+async function subirImagenProducto(productoId, inputFile) {
+  if (!inputFile.files.length) return;
+  try {
+    const dataUrl = await comprimirImagenADataURL(inputFile.files[0], 500, 0.78);
+    await fetch(`/api/productos/${productoId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ imagen: dataUrl }),
+    });
+    await recargarCategoriasYProductos();
+    renderProductosAdmin();
+  } catch (err) {
+    alert('No se pudo subir la imagen: ' + (err.message || 'intenta de nuevo'));
+  }
+}
+
+// Igual que comprimirImagenABase64, pero regresa el data URL completo
+// (con el "data:image/jpeg;base64," incluido) para usarlo directo en <img src>.
+async function comprimirImagenADataURL(archivo, maxDimension, calidad) {
+  function escalar(width, height) {
+    if (width > maxDimension || height > maxDimension) {
+      if (width > height) {
+        height = Math.round(height * (maxDimension / width));
+        width = maxDimension;
+      } else {
+        width = Math.round(width * (maxDimension / height));
+        height = maxDimension;
+      }
+    }
+    return { width, height };
+  }
+
+  if (window.createImageBitmap) {
+    try {
+      const bitmap = await createImageBitmap(archivo);
+      const { width, height } = escalar(bitmap.width, bitmap.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+      bitmap.close();
+      return canvas.toDataURL('image/jpeg', calidad);
+    } catch (err) {
+      console.warn('createImageBitmap falló, probando con el método alterno:', err);
+    }
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const { width, height } = escalar(img.width, img.height);
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', calidad));
+      };
+      img.onerror = () => reject(new Error('El navegador no pudo abrir esta imagen'));
+      img.src = e.target.result;
+    };
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo'));
+    reader.readAsDataURL(archivo);
   });
 }
 
