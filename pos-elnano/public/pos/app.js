@@ -476,12 +476,13 @@ async function cancelarItemEditar(itemId) {
 
 function renderTicketPanel() {
   const cont = document.getElementById('ticket-items');
-  let items, total;
+  let items, total, subtotalProductos, envio;
 
   if (ticketState.modo === 'nuevo') {
     items = ticketState.carrito;
-    const totalProductos = items.reduce((sum, it) => sum + it.precio * it.cantidad, 0);
-    total = totalProductos + (ticketState.costoEnvio || 0);
+    subtotalProductos = items.reduce((sum, it) => sum + it.precio * it.cantidad, 0);
+    envio = ticketState.costoEnvio || 0;
+    total = subtotalProductos + envio;
 
     cont.innerHTML =
       items
@@ -503,6 +504,8 @@ function renderTicketPanel() {
   } else {
     const itemsActivos = ticketState.pedidoData.items.filter((it) => !it.cancelado);
     total = Number(ticketState.pedidoData.total);
+    subtotalProductos = itemsActivos.reduce((sum, it) => sum + it.cantidad * it.precio_unitario, 0);
+    envio = Number(ticketState.pedidoData.costo_envio) || 0;
 
     cont.innerHTML =
       itemsActivos
@@ -525,6 +528,17 @@ function renderTicketPanel() {
     });
   }
 
+  document.getElementById('ticket-desglose').innerHTML = `
+    <div style="display:flex;justify-content:space-between">
+      <span>Subtotal productos</span><span>$${subtotalProductos.toFixed(2)}</span>
+    </div>
+    ${
+      envio > 0
+        ? `<div style="display:flex;justify-content:space-between;color:#1a7d3a">
+            <span>🛵 Costo de envío</span><span>$${envio.toFixed(2)}</span>
+          </div>`
+        : ''
+    }`;
   document.getElementById('ticket-total').textContent = `$${total.toFixed(2)}`;
 }
 
@@ -2353,16 +2367,23 @@ function conectarBotonesWhatsApp(contenedor) {
 }
 
 function construirMensajeWhatsApp(pedido) {
-  const itemsTexto = (pedido.items || [])
-    .filter((it) => !it.cancelado)
+  const itemsActivos = (pedido.items || []).filter((it) => !it.cancelado);
+  const itemsTexto = itemsActivos
     .map((it) => {
       const opciones = (it.opciones_seleccionadas || []).map((o) => o.nombre).join(', ');
       return `• ${it.cantidad}x ${it.producto_nombre}${opciones ? ` (${opciones})` : ''}`;
     })
     .join('\n');
 
+  const subtotal = itemsActivos.reduce((s, it) => s + it.cantidad * it.precio_unitario, 0);
+  const envio = Number(pedido.costo_envio) || 0;
+
   const tipoLabel = TIPO_LABELS[pedido.tipo] || pedido.tipo;
-  let mensaje = `Hola ${pedido.cliente_nombre || ''}, este es el resumen de tu pedido #${pedido.numero_dia ?? pedido.id} en El Nano (${tipoLabel}):\n\n${itemsTexto}\n\nTotal: $${Number(pedido.total).toFixed(2)}`;
+  let mensaje = `Hola ${pedido.cliente_nombre || ''}, este es el resumen de tu pedido #${pedido.numero_dia ?? pedido.id} en El Nano (${tipoLabel}):\n\n${itemsTexto}\n\nSubtotal productos: $${subtotal.toFixed(2)}`;
+  if (envio > 0) {
+    mensaje += `\n🛵 Costo de envío: $${envio.toFixed(2)}`;
+  }
+  mensaje += `\nTotal: $${Number(pedido.total).toFixed(2)}`;
 
   if (pedido.tipo === 'domicilio') {
     if (pedido.cliente_direccion) {
