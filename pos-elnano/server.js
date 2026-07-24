@@ -181,16 +181,17 @@ app.post('/api/productos', async (req, res) => {
 
 app.patch('/api/productos/:id', async (req, res) => {
   const { id } = req.params;
-  const { nombre, categoria_id, precio, disponible, estacion } = req.body;
+  const { nombre, categoria_id, precio, disponible, estacion, imagen } = req.body;
   const { rows } = await pool.query(
     `UPDATE productos SET
        nombre = COALESCE($1, nombre),
        categoria_id = COALESCE($2, categoria_id),
        precio = COALESCE($3, precio),
        disponible = COALESCE($4, disponible),
-       estacion = COALESCE($5, estacion)
-     WHERE id = $6 RETURNING *`,
-    [nombre, categoria_id, precio, disponible, estacion, id]
+       estacion = COALESCE($5, estacion),
+       imagen = COALESCE($6, imagen)
+     WHERE id = $7 RETURNING *`,
+    [nombre, categoria_id, precio, disponible, estacion, imagen, id]
   );
   if (!rows.length) return res.status(404).json({ error: 'Producto no encontrado' });
   res.json(rows[0]);
