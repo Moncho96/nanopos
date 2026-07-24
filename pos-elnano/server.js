@@ -1113,11 +1113,35 @@ async function calcularCorte(sucursalId, fechaDesde, fechaHasta) {
     [sucursalId, fechaDesde, fechaHasta]
   );
 
+  // Envío cobrado por cada método, solo de pedidos a domicilio. El repartidor
+  // siempre se paga en efectivo, así que si el pedido se cobró por tarjeta o
+  // transferencia, ese dinero de envío se queda "de más" en esa cuenta, y sale
+  // el mismo monto "de menos" de la caja (se pagó en efectivo sin haber entrado
+  // efectivo por ese pedido).
+  const { rows: envioPorMetodoRows } = await pool.query(
+    `SELECT pg.metodo, SUM(pg.monto * COALESCE(p.costo_envio, 0) / NULLIF(p.total, 0)) AS envio
+     FROM pagos pg
+     JOIN pedidos p ON p.id = pg.pedido_id
+     WHERE p.sucursal_id = $1 AND p.cancelado = false AND p.tipo = 'domicilio'
+       AND ${fechaNegocioSQL('pg.creado_en')} BETWEEN $2 AND $3
+     GROUP BY pg.metodo`,
+    [sucursalId, fechaDesde, fechaHasta]
+  );
+  const envioPorMetodo = {};
+  envioPorMetodoRows.forEach((r) => {
+    envioPorMetodo[r.metodo] = Number(r.envio) || 0;
+  });
+  const envioNoEfectivo = Object.keys(envioPorMetodo)
+    .filter((m) => m !== 'efectivo')
+    .reduce((s, m) => s + envioPorMetodo[m], 0);
+
   const metodos = ['efectivo', 'tarjeta', 'transferencia'];
   const resumen = metodos.map((m) => {
     const venta = Number(ventas.find((v) => v.metodo === m)?.total || 0);
     const gasto = Number(gastos.find((g) => g.metodo === m)?.total || 0);
-    return { metodo: m, ventas: Number(venta.toFixed(2)), gastos: gasto, neto: Number((venta - gasto).toFixed(2)) };
+    const ajusteEnvio = m === 'efectivo' ? Number((-envioNoEfectivo).toFixed(2)) : Number((envioPorMetodo[m] || 0).toFixed(2));
+    const neto = Number((venta - gasto + ajusteEnvio).toFixed(2));
+    return { metodo: m, ventas: Number(venta.toFixed(2)), gastos: gasto, ajusteEnvio, neto };
   });
 
   const totalVentas = Number(resumen.reduce((s, r) => s + r.ventas, 0).toFixed(2));
@@ -1130,6 +1154,7 @@ async function calcularCorte(sucursalId, fechaDesde, fechaHasta) {
     fechaHasta,
     sucursal_id: Number(sucursalId),
     pedidosCobrados: Number(pedidosCount[0].cantidad),
+    envioNoEfectivo: Number(envioNoEfectivo.toFixed(2)),
     resumen,
     totalVentas,
     totalGastos,
