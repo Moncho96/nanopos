@@ -14,6 +14,7 @@ app.use(express.json({ limit: '10mb' }));
 // Sirve las dos pantallas: /pos (toma de pedidos) y /kds (monitor de cocina)
 app.use('/pos', express.static(path.join(__dirname, 'public/pos')));
 app.use('/kds', express.static(path.join(__dirname, 'public/kds')));
+app.use('/pedir', express.static(path.join(__dirname, 'public/pedir')));
 app.get('/', (req, res) => res.redirect('/pos'));
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -712,7 +713,7 @@ app.post('/api/importar-historico', async (req, res) => {
 });
 
 app.post('/api/pedidos', async (req, res) => {
-  const { sucursal_id, cliente_id, cliente_nombre, tipo, notas, items, costo_envio } = req.body;
+  const { sucursal_id, cliente_id, cliente_nombre, tipo, notas, items, costo_envio, origen } = req.body;
   if (!sucursal_id || !items || !items.length) {
     return res.status(400).json({ error: 'Falta sucursal_id o items' });
   }
@@ -734,9 +735,9 @@ app.post('/api/pedidos', async (req, res) => {
     const numeroDia = contadorRows[0].n + 1;
 
     const pedidoRes = await client.query(
-      `INSERT INTO pedidos (sucursal_id, cliente_id, cliente_nombre, tipo, notas, total, costo_envio, numero_dia)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [sucursal_id, cliente_id || null, cliente_nombre.trim(), tipo || 'mesa', notas || null, total, costoEnvio, numeroDia]
+      `INSERT INTO pedidos (sucursal_id, cliente_id, cliente_nombre, tipo, notas, total, costo_envio, numero_dia, origen)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [sucursal_id, cliente_id || null, cliente_nombre.trim(), tipo || 'mesa', notas || null, total, costoEnvio, numeroDia, origen === 'web' ? 'web' : 'pos']
     );
     const pedido = pedidoRes.rows[0];
 
