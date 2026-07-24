@@ -1,0 +1,9 @@
+{
+  "name": "El Nano - Pide en línea",
+  "short_name": "El Nano",
+  "start_url": "/pedir",
+  "display": "standalone",
+  "background_color": "#f4f4f4",
+  "theme_color": "#b8232f",
+  "icons": []
+}
