@@ -32,7 +32,7 @@ io.on('connection', (socket) => {
 // ---------- Auxiliares ----------
 async function obtenerPedidoCompleto(pedidoId) {
   const { rows } = await pool.query(
-    `SELECT p.*, c.telefono AS cliente_telefono
+    `SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia
      FROM pedidos p LEFT JOIN clientes c ON c.id = p.cliente_id
      WHERE p.id = $1`,
     [pedidoId]
@@ -794,7 +794,7 @@ app.post('/api/pedidos', async (req, res) => {
 app.get('/api/pedidos', async (req, res) => {
   const { sucursal_id, estado, pagado, cancelado, fecha_desde, fecha_hasta } = req.query;
   let query = `
-    SELECT p.*, c.telefono AS cliente_telefono
+    SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia
     FROM pedidos p
     LEFT JOIN clientes c ON c.id = p.cliente_id
     WHERE 1=1`;
