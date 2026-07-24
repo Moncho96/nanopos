@@ -91,6 +91,8 @@ function renderListaPedidos(pedidos) {
   const cont = document.getElementById('lista-pedidos');
   const sinPedidos = document.getElementById('sin-pedidos');
 
+  registrarPedidosEnCache(pedidos);
+
   if (!pedidos.length) {
     cont.innerHTML = '';
     sinPedidos.style.display = 'block';
@@ -102,6 +104,7 @@ function renderListaPedidos(pedidos) {
   cont.querySelectorAll('.pedido-row').forEach((el) => {
     el.addEventListener('click', () => abrirOverlayEditar(Number(el.dataset.id)));
   });
+  conectarBotonesWhatsApp(cont);
 }
 
 function renderPedidoRow(pedido) {
@@ -128,7 +131,10 @@ function renderPedidoRow(pedido) {
         <span class="pedido-row-id">#${pedido.numero_dia ?? pedido.id} <span class="badge badge-${pedido.tipo}">${tipoLabel}</span>${pedido.origen === 'web' ? ' <span class="badge" style="background:#e0f2ff;color:#0056b3">🌐 En línea</span>' : ''}</span>
         <span class="pedido-row-hora">${fechaCorta} · ${hora}</span>
       </div>
-      <div class="pedido-row-cliente">👤 ${pedido.cliente_nombre || ''}</div>
+      <div class="pedido-row-cliente">
+        👤 ${pedido.cliente_nombre || ''}
+        ${pedido.cliente_telefono ? `<button class="btn-whatsapp-row" data-id="${pedido.id}" style="background:#25D366;color:white;border:none;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:bold;cursor:pointer;margin-left:6px">📱 WhatsApp</button>` : ''}
+      </div>
       <div class="pedido-row-items">${itemsTexto}</div>
       <div class="pedido-row-bottom">
         <span class="pedido-row-total">$${Number(pedido.total).toFixed(2)}</span>
@@ -228,11 +234,14 @@ async function abrirOverlayEditar(pedidoId) {
   const accionesExtra = document.getElementById('ticket-acciones-extra');
   const btnCambiarMetodo = document.getElementById('btn-cambiar-metodo');
   const btnCancelarCompleto = document.getElementById('btn-cancelar-pedido-completo');
+  const btnWhatsapp = document.getElementById('btn-whatsapp-ticket');
 
   bannerCancelado.style.display = pedido.cancelado ? 'block' : 'none';
   accionesExtra.style.display = pedido.cancelado ? 'none' : 'flex';
   btnCambiarMetodo.style.display = pedido.pagado && !pedido.cancelado ? 'block' : 'none';
   btnCancelarCompleto.style.display = pedido.cancelado ? 'none' : 'block';
+  btnWhatsapp.style.display = pedido.cliente_telefono && !pedido.cancelado ? 'block' : 'none';
+  btnWhatsapp.onclick = () => abrirWhatsAppCliente(pedido);
 
   if (pedido.cancelado) {
     document.getElementById('btn-t-pago').style.display = 'none';
@@ -2301,8 +2310,61 @@ async function cargarHistorial() {
     return;
   }
   sinHistorial.style.display = 'none';
+  registrarPedidosEnCache(pedidos);
   cont.innerHTML = pedidos.map((p) => renderPedidoRow(p)).join('');
   cont.querySelectorAll('.pedido-row').forEach((el) => {
     el.addEventListener('click', () => abrirOverlayEditar(Number(el.dataset.id)));
   });
+  conectarBotonesWhatsApp(cont);
+}
+
+// ==================== CONTACTAR CLIENTE POR WHATSAPP ====================
+
+const pedidosCache = {};
+
+function registrarPedidosEnCache(pedidos) {
+  pedidos.forEach((p) => {
+    pedidosCache[p.id] = p;
+  });
+}
+
+function conectarBotonesWhatsApp(contenedor) {
+  contenedor.querySelectorAll('.btn-whatsapp-row').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const pedido = pedidosCache[Number(btn.dataset.id)];
+      if (pedido) abrirWhatsAppCliente(pedido);
+    });
+  });
+}
+
+function construirMensajeWhatsApp(pedido) {
+  const itemsTexto = (pedido.items || [])
+    .filter((it) => !it.cancelado)
+    .map((it) => {
+      const opciones = (it.opciones_seleccionadas || []).map((o) => o.nombre).join(', ');
+      return `• ${it.cantidad}x ${it.producto_nombre}${opciones ? ` (${opciones})` : ''}`;
+    })
+    .join('\n');
+
+  const tipoLabel = TIPO_LABELS[pedido.tipo] || pedido.tipo;
+  let mensaje = `Hola ${pedido.cliente_nombre || ''}, este es el resumen de tu pedido #${pedido.numero_dia ?? pedido.id} en El Nano (${tipoLabel}):\n\n${itemsTexto}\n\nTotal: $${Number(pedido.total).toFixed(2)}`;
+
+  if (pedido.tipo === 'domicilio') {
+    mensaje += `\n\n¿Nos confirmas tu dirección completa para el envío?`;
+  } else {
+    mensaje += `\n\n¿Todo correcto?`;
+  }
+  return mensaje;
+}
+
+function abrirWhatsAppCliente(pedido) {
+  if (!pedido.cliente_telefono) {
+    alert('Este pedido no tiene teléfono registrado.');
+    return;
+  }
+  let numero = pedido.cliente_telefono.replace(/\D/g, '');
+  if (numero.length === 10) numero = '52' + numero; // agrega código de país de México si hace falta
+  const mensaje = construirMensajeWhatsApp(pedido);
+  window.open(`https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`, '_blank');
 }
