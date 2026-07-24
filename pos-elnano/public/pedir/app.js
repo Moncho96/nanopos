@@ -218,7 +218,20 @@ function renderCartItems() {
 }
 
 function actualizarTotalWeb() {
-  document.getElementById('total-web').textContent = `$${totalCarrito().toFixed(2)}`;
+  const subtotal = state.carrito.reduce((sum, it) => sum + it.precio * it.cantidad, 0);
+  const envio = state.costoEnvio || 0;
+  document.getElementById('desglose-web').innerHTML = `
+    <div style="display:flex;justify-content:space-between">
+      <span>Subtotal productos</span><span>$${subtotal.toFixed(2)}</span>
+    </div>
+    ${
+      envio > 0
+        ? `<div style="display:flex;justify-content:space-between;color:#1a7d3a;font-weight:600">
+            <span>🛵 Costo de envío</span><span>$${envio.toFixed(2)}</span>
+          </div>`
+        : ''
+    }`;
+  document.getElementById('total-web').textContent = `$${(subtotal + envio).toFixed(2)}`;
 }
 
 // ---------- Confirmar pedido ----------
