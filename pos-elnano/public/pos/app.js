@@ -125,7 +125,7 @@ function renderPedidoRow(pedido) {
   return `
     <div class="pedido-row" data-id="${pedido.id}">
       <div class="pedido-row-top">
-        <span class="pedido-row-id">#${pedido.numero_dia ?? pedido.id} <span class="badge badge-${pedido.tipo}">${tipoLabel}</span></span>
+        <span class="pedido-row-id">#${pedido.numero_dia ?? pedido.id} <span class="badge badge-${pedido.tipo}">${tipoLabel}</span>${pedido.origen === 'web' ? ' <span class="badge" style="background:#e0f2ff;color:#0056b3">🌐 En línea</span>' : ''}</span>
         <span class="pedido-row-hora">${fechaCorta} · ${hora}</span>
       </div>
       <div class="pedido-row-cliente">👤 ${pedido.cliente_nombre || ''}</div>
@@ -1151,6 +1151,40 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== TIEMPO REAL: refresca sola cuando llega un pedido (ej. de la web) ====================
+
+const socketPos = io();
+let sonidoAvisoWebListo = false;
+
+function unirseASalaSucursal() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  if (sucursalId) socketPos.emit('join_sucursal', sucursalId);
+}
+socketPos.on('connect', unirseASalaSucursal);
+document.getElementById('sucursal-select').addEventListener('change', unirseASalaSucursal);
+
+function sonarAvisoPos() {
+  try {
+    const audio = new AudioContext();
+    const osc = audio.createOscillator();
+    osc.connect(audio.destination);
+    osc.frequency.value = 660;
+    osc.start();
+    setTimeout(() => osc.stop(), 180);
+  } catch (e) {}
+}
+
+socketPos.on('nuevo_pedido', (pedido) => {
+  sonarAvisoPos();
+  cargarPedidosYContar();
+  if (document.getElementById('overlay-historial').classList.contains('abierto')) cargarHistorial();
+});
+
+socketPos.on('pedido_actualizado', () => {
+  cargarPedidosYContar();
+  if (document.getElementById('overlay-historial').classList.contains('abierto')) cargarHistorial();
+});
 
 // ==================== REGISTRAR COMPRA (con lectura de ticket) ====================
 
