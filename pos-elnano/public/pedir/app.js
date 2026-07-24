@@ -19,6 +19,15 @@ const state = {
   costoEnvio: 0,
 };
 
+function normalizarSlug(nombre) {
+  return nombre
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
 async function cargarInicial() {
   state.sucursales = await fetch('/api/sucursales').then((r) => r.json());
   state.categorias = await fetch('/api/categorias').then((r) => r.json());
@@ -30,6 +39,23 @@ async function cargarInicial() {
     state.envios = await fetch(`/api/envios?sucursal_id=${select.value}`).then((r) => r.json());
     renderColoniaOptions();
   });
+
+  // Si el link trae ?sucursal=santa-maria (o el id numérico), se fija esa sucursal
+  // y se oculta el selector, para que el cliente no pueda mandar el pedido a la otra.
+  const params = new URLSearchParams(window.location.search);
+  const sucursalParam = params.get('sucursal');
+  if (sucursalParam) {
+    const encontrada = state.sucursales.find(
+      (s) => normalizarSlug(s.nombre) === sucursalParam.toLowerCase() || String(s.id) === sucursalParam
+    );
+    if (encontrada) {
+      select.value = encontrada.id;
+      select.style.display = 'none';
+      const fijaEl = document.getElementById('sucursal-fija');
+      fijaEl.textContent = '📍 ' + encontrada.nombre;
+      fijaEl.style.display = 'block';
+    }
+  }
 
   state.envios = await fetch(`/api/envios?sucursal_id=${select.value}`).then((r) => r.json());
   renderColoniaOptions();
