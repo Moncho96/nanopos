@@ -135,6 +135,11 @@ function renderPedidoRow(pedido) {
         👤 ${pedido.cliente_nombre || ''}
         ${pedido.cliente_telefono ? `<button class="btn-whatsapp-row" data-id="${pedido.id}" style="background:#25D366;color:white;border:none;border-radius:6px;padding:3px 8px;font-size:11px;font-weight:bold;cursor:pointer;margin-left:6px">📱 WhatsApp</button>` : ''}
       </div>
+      ${
+        pedido.cliente_direccion
+          ? `<div style="font-size:12px;color:#666;margin-bottom:4px">📍 ${pedido.cliente_direccion}${pedido.cliente_colonia ? ', ' + pedido.cliente_colonia : ''}</div>`
+          : ''
+      }
       <div class="pedido-row-items">${itemsTexto}</div>
       <div class="pedido-row-bottom">
         <span class="pedido-row-total">$${Number(pedido.total).toFixed(2)}</span>
@@ -224,6 +229,14 @@ async function abrirOverlayEditar(pedidoId) {
   document.getElementById('ticket-cliente-telefono').value = pedido.cliente_telefono || '';
   document.getElementById('ticket-cliente-telefono').disabled = true;
 
+  const direccionEl = document.getElementById('ticket-direccion-display');
+  if (pedido.cliente_direccion || pedido.cliente_colonia) {
+    direccionEl.textContent = `📍 ${pedido.cliente_direccion || ''}${pedido.cliente_colonia ? ', ' + pedido.cliente_colonia : ''}`;
+    direccionEl.style.display = 'block';
+  } else {
+    direccionEl.style.display = 'none';
+  }
+
   mostrarControlesTicket(!ticketState.soloLectura);
   document.getElementById('btn-mostrar-productos').style.display = ticketState.soloLectura ? 'none' : '';
   document.getElementById('btn-t-cancelar').textContent = 'Cerrar';
@@ -289,6 +302,7 @@ function prepararCamposCliente() {
   document.getElementById('ticket-cliente-nombre').value = '';
   document.getElementById('ticket-cliente-telefono').value = '';
   document.getElementById('ticket-cliente-direccion').value = '';
+  document.getElementById('ticket-direccion-display').style.display = 'none';
 
   const esDomicilioNuevo = ticketState.modo === 'nuevo' && ticketState.tipo === 'domicilio';
   document.getElementById('ticket-cliente-direccion').style.display = esDomicilioNuevo ? 'block' : 'none';
@@ -2351,7 +2365,11 @@ function construirMensajeWhatsApp(pedido) {
   let mensaje = `Hola ${pedido.cliente_nombre || ''}, este es el resumen de tu pedido #${pedido.numero_dia ?? pedido.id} en El Nano (${tipoLabel}):\n\n${itemsTexto}\n\nTotal: $${Number(pedido.total).toFixed(2)}`;
 
   if (pedido.tipo === 'domicilio') {
-    mensaje += `\n\n¿Nos confirmas tu dirección completa para el envío?`;
+    if (pedido.cliente_direccion) {
+      mensaje += `\n\n📍 Dirección: ${pedido.cliente_direccion}${pedido.cliente_colonia ? ', ' + pedido.cliente_colonia : ''}\n¿Es correcta?`;
+    } else {
+      mensaje += `\n\n¿Nos confirmas tu dirección completa para el envío?`;
+    }
   } else {
     mensaje += `\n\n¿Todo correcto?`;
   }
