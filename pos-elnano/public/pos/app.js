@@ -1006,10 +1006,19 @@ async function cargarCorte() {
         <td>${METODO_LABELS[r.metodo]}</td>
         <td class="num">$${r.ventas.toFixed(2)}</td>
         <td class="num">$${r.gastos.toFixed(2)}</td>
+        <td class="num" style="color:${r.ajusteEnvio < 0 ? '#b8232f' : r.ajusteEnvio > 0 ? '#1a7d3a' : '#999'}">${r.ajusteEnvio !== 0 ? (r.ajusteEnvio > 0 ? '+' : '') + '$' + r.ajusteEnvio.toFixed(2) : '—'}</td>
         <td class="num"><strong>$${r.neto.toFixed(2)}</strong></td>
       </tr>`
     )
     .join('');
+
+  const notaEnvio = document.getElementById('corte-nota-envio');
+  if (corteActual.envioNoEfectivo > 0) {
+    notaEnvio.style.display = 'block';
+    notaEnvio.innerHTML = `🛵 <strong>$${corteActual.envioNoEfectivo.toFixed(2)}</strong> de envío se pagó en efectivo a repartidores de pedidos cobrados por tarjeta/transferencia. Ya está restado de lo que debe haber en <strong>Efectivo</strong>, y sumado como pendiente de traspasar en <strong>Tarjeta/Transferencia</strong> — pasa ese monto de la cuenta a la caja cuando puedas para que cuadren ambas.`;
+  } else {
+    notaEnvio.style.display = 'none';
+  }
 
   document.getElementById('corte-pedidos-cobrados').textContent = `Pedidos cobrados: ${corteActual.pedidosCobrados}`;
   document.getElementById('corte-total-envios').textContent = `$${corteActual.totalEnvios.toFixed(2)}`;
