@@ -89,7 +89,11 @@ function renderProductos() {
     .map(
       (p) => `
       <div class="prod-card" data-id="${p.id}">
-        <div class="emoji">${CATEGORIA_EMOJI[categoriaPorId[p.categoria_id]] || '🍴'}</div>
+        ${
+          p.imagen
+            ? `<img src="${p.imagen}" style="width:100%;height:80px;object-fit:cover;border-radius:8px;margin-bottom:8px" />`
+            : `<div class="emoji">${CATEGORIA_EMOJI[categoriaPorId[p.categoria_id]] || '🍴'}</div>`
+        }
         <div class="nombre">${p.nombre}</div>
         <div class="precio">$${Number(p.precio).toFixed(2)}</div>
       </div>`
