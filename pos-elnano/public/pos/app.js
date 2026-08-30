@@ -334,6 +334,7 @@ function prepararCamposCliente() {
   document.getElementById('ticket-cliente-nombre').value = '';
   document.getElementById('ticket-cliente-telefono').value = '';
   document.getElementById('ticket-cliente-direccion').value = '';
+  document.getElementById('ticket-cliente-encontrado').style.display = 'none';
   document.getElementById('ticket-direccion-display').style.display = 'none';
 
   const esDomicilioNuevo = ticketState.modo === 'nuevo' && ticketState.tipo === 'domicilio';
@@ -970,6 +971,14 @@ document.getElementById('btn-abrir-compra-registro').addEventListener('click', (
 });
 document.getElementById('btn-cerrar-compra-registro').addEventListener('click', () => document.getElementById('overlay-compra-registro').classList.remove('abierto'));
 
+document.getElementById('btn-abrir-clientes').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-clientes').classList.add('abierto');
+  document.getElementById('clientes-buscar').value = '';
+  cargarClientes();
+});
+document.getElementById('btn-cerrar-clientes').addEventListener('click', () => document.getElementById('overlay-clientes').classList.remove('abierto'));
+
 document.getElementById('btn-abrir-reparto').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-reparto').classList.add('abierto');
@@ -1259,6 +1268,105 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== CATÁLOGO DE CLIENTES ====================
+
+let clientesTimeout = null;
+document.getElementById('clientes-buscar').addEventListener('input', () => {
+  clearTimeout(clientesTimeout);
+  clientesTimeout = setTimeout(cargarClientes, 300);
+});
+
+async function cargarClientes() {
+  const buscar = document.getElementById('clientes-buscar').value.trim();
+  const url = buscar ? `/api/clientes?buscar=${encodeURIComponent(buscar)}` : '/api/clientes?buscar=';
+  const clientes = await fetch(url).then((r) => r.json());
+  renderClientes(clientes);
+}
+
+function renderClientes(clientes) {
+  document.getElementById('clientes-tabla-body').innerHTML =
+    clientes
+      .map(
+        (c) => `
+    <tr>
+      <td><input type="text" class="cliente-nombre-edit" data-id="${c.id}" value="${c.nombre || ''}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td><input type="text" class="cliente-telefono-edit" data-id="${c.id}" value="${c.telefono || ''}" style="width:110px;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td><input type="text" class="cliente-direccion-edit" data-id="${c.id}" value="${c.direccion || ''}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td><input type="text" class="cliente-colonia-edit" data-id="${c.id}" value="${c.colonia || ''}" style="width:100px;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td style="white-space:nowrap">
+        <button class="btn-eliminar-fila" data-guardar-cliente="${c.id}" title="Guardar">💾</button>
+        <button class="btn-eliminar-fila" data-borrar-cliente="${c.id}" title="Borrar">🗑️</button>
+      </td>
+    </tr>`
+      )
+      .join('') || '<tr><td colspan="5" style="text-align:center;color:#999">Sin clientes encontrados</td></tr>';
+
+  document.querySelectorAll('[data-guardar-cliente]').forEach((btn) => {
+    btn.addEventListener('click', () => guardarClienteAdmin(Number(btn.dataset.guardarCliente)));
+  });
+  document.querySelectorAll('[data-borrar-cliente]').forEach((btn) => {
+    btn.addEventListener('click', () => borrarClienteAdmin(Number(btn.dataset.borrarCliente)));
+  });
+}
+
+async function guardarClienteAdmin(clienteId) {
+  const nombre = document.querySelector(`.cliente-nombre-edit[data-id="${clienteId}"]`).value.trim();
+  const telefono = document.querySelector(`.cliente-telefono-edit[data-id="${clienteId}"]`).value.trim();
+  const direccion = document.querySelector(`.cliente-direccion-edit[data-id="${clienteId}"]`).value.trim();
+  const colonia = document.querySelector(`.cliente-colonia-edit[data-id="${clienteId}"]`).value.trim();
+
+  const resp = await fetch(`/api/clientes/${clienteId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, telefono, direccion, colonia }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json();
+    alert(err.error || 'No se pudo guardar');
+  }
+  cargarClientes();
+}
+
+async function borrarClienteAdmin(clienteId) {
+  if (!confirm('¿Borrar este cliente del catálogo?')) return;
+  const resp = await fetch(`/api/clientes/${clienteId}`, { method: 'DELETE' });
+  if (!resp.ok) {
+    const err = await resp.json();
+    alert(err.error || 'No se pudo borrar');
+  }
+  cargarClientes();
+}
+
+// ---------- Autocompletar cliente al escribir el teléfono en un pedido nuevo ----------
+
+let telefonoTimeout = null;
+document.getElementById('ticket-cliente-telefono').addEventListener('input', () => {
+  clearTimeout(telefonoTimeout);
+  document.getElementById('ticket-cliente-encontrado').style.display = 'none';
+  if (ticketState && ticketState.modo !== 'nuevo') return; // solo autocompleta al crear, no al editar uno ya existente
+  telefonoTimeout = setTimeout(buscarClientePorTelefono, 400);
+});
+
+async function buscarClientePorTelefono() {
+  const telefono = document.getElementById('ticket-cliente-telefono').value.trim();
+  if (telefono.length < 8) return;
+
+  const clientes = await fetch(`/api/clientes?telefono=${encodeURIComponent(telefono)}`).then((r) => r.json());
+  if (!clientes.length) return;
+
+  const cliente = clientes[0];
+  document.getElementById('ticket-cliente-nombre').value = cliente.nombre || '';
+  if (cliente.direccion) document.getElementById('ticket-cliente-direccion').value = cliente.direccion;
+  if (cliente.colonia) {
+    const selectColonia = document.getElementById('ticket-cliente-colonia');
+    if ([...selectColonia.options].some((op) => op.value === cliente.colonia)) {
+      selectColonia.value = cliente.colonia;
+      selectColonia.dispatchEvent(new Event('change'));
+    }
+  }
+  document.getElementById('ticket-cliente-encontrado').style.display = 'block';
+}
 
 // ==================== REPARTO DE UTILIDADES ====================
 
