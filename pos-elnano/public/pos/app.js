@@ -38,6 +38,15 @@ let ticketState = null; // ver abrirOverlayNuevo / abrirOverlayEditar
 
 // ==================== CARGA INICIAL ====================
 
+function normalizarSlug(nombre) {
+  return nombre
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
 async function cargarInicial() {
   state.sucursales = await fetch('/api/sucursales').then((r) => r.json());
   state.categorias = await fetch('/api/categorias').then((r) => r.json());
@@ -45,7 +54,30 @@ async function cargarInicial() {
 
   const select = document.getElementById('sucursal-select');
   select.innerHTML = state.sucursales.map((s) => `<option value="${s.id}">${s.nombre}</option>`).join('');
+
+  // Elige la sucursal en este orden de prioridad:
+  // 1) La que venga en el link (ej. /pos?sucursal=santa-maria)
+  // 2) La última que se usó en este dispositivo (para no resetear a la primera al recargar)
+  // 3) La primera de la lista, como respaldo
+  const params = new URLSearchParams(window.location.search);
+  const sucursalParam = params.get('sucursal');
+  let sucursalElegida = null;
+
+  if (sucursalParam) {
+    sucursalElegida = state.sucursales.find(
+      (s) => normalizarSlug(s.nombre) === sucursalParam.toLowerCase() || String(s.id) === sucursalParam
+    );
+  }
+  if (!sucursalElegida) {
+    const guardada = localStorage.getItem('elnano_sucursal_id');
+    if (guardada) sucursalElegida = state.sucursales.find((s) => String(s.id) === guardada);
+  }
+  if (sucursalElegida) select.value = sucursalElegida.id;
+
+  localStorage.setItem('elnano_sucursal_id', select.value);
+
   select.addEventListener('change', async () => {
+    localStorage.setItem('elnano_sucursal_id', select.value);
     state.envios = await fetch(`/api/envios?sucursal_id=${select.value}`).then((r) => r.json());
     cargarPedidosYContar();
   });
@@ -929,6 +961,20 @@ document.getElementById('btn-abrir-compra-registro').addEventListener('click', (
 });
 document.getElementById('btn-cerrar-compra-registro').addEventListener('click', () => document.getElementById('overlay-compra-registro').classList.remove('abierto'));
 
+document.getElementById('btn-abrir-reparto').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-reparto').classList.add('abierto');
+  document.getElementById('reparto-fecha').value = fechaNegocioActual();
+  cargarReparto();
+});
+document.getElementById('btn-cerrar-reparto').addEventListener('click', () => document.getElementById('overlay-reparto').classList.remove('abierto'));
+
+document.getElementById('btn-abrir-importar-recetas').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-importar-recetas').classList.add('abierto');
+});
+document.getElementById('btn-cerrar-importar-recetas').addEventListener('click', () => document.getElementById('overlay-importar-recetas').classList.remove('abierto'));
+
 document.getElementById('btn-abrir-importar').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-importar').classList.add('abierto');
@@ -1204,6 +1250,154 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== REPARTO DE UTILIDADES ====================
+
+document.getElementById('reparto-monto').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+});
+
+document.getElementById('btn-agregar-reparto').addEventListener('click', async () => {
+  const fecha = document.getElementById('reparto-fecha').value;
+  const socio = document.getElementById('reparto-socio').value.trim();
+  const monto = document.getElementById('reparto-monto').value;
+  const metodo_pago = document.getElementById('reparto-metodo').value;
+  const nota = document.getElementById('reparto-nota').value.trim();
+
+  if (!fecha || !socio || !monto) {
+    alert('Falta la fecha, el socio o el monto');
+    return;
+  }
+
+  await fetch('/api/distribuciones', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ fecha, socio, monto, metodo_pago, nota }),
+  });
+
+  document.getElementById('reparto-socio').value = '';
+  document.getElementById('reparto-monto').value = '';
+  document.getElementById('reparto-nota').value = '';
+  cargarReparto();
+});
+
+async function cargarReparto() {
+  const distribuciones = await fetch('/api/distribuciones').then((r) => r.json());
+
+  // Resumen por socio, para ver de un vistazo si van parejos en el reparto
+  const totalesPorSocio = {};
+  distribuciones.forEach((d) => {
+    totalesPorSocio[d.socio] = (totalesPorSocio[d.socio] || 0) + Number(d.monto);
+  });
+  const socios = Object.keys(totalesPorSocio);
+  const totalGeneral = socios.reduce((s, nombre) => s + totalesPorSocio[nombre], 0);
+
+  const resumenEl = document.getElementById('reparto-resumen');
+  if (!socios.length) {
+    resumenEl.innerHTML = '<p style="padding:0 12px;color:#999;font-size:13px">Sin repartos registrados todavía</p>';
+  } else {
+    resumenEl.innerHTML = socios
+      .map((nombre) => {
+        const monto = totalesPorSocio[nombre];
+        const porcentaje = totalGeneral ? ((monto / totalGeneral) * 100).toFixed(1) : '0';
+        return `
+        <div class="resumen-total">
+          <span>${escapeHtml(nombre)} (${porcentaje}%)</span>
+          <span>$${monto.toFixed(2)}</span>
+        </div>`;
+      })
+      .join('');
+  }
+
+  document.getElementById('reparto-tabla-body').innerHTML =
+    distribuciones
+      .map(
+        (d) => `
+      <tr>
+        <td>${d.fecha}</td>
+        <td>${escapeHtml(d.socio)}</td>
+        <td class="num">$${Number(d.monto).toFixed(2)}</td>
+        <td>${METODO_LABELS[d.metodo_pago] || ''}</td>
+        <td><button class="btn-eliminar-fila" data-id="${d.id}">🗑️</button></td>
+      </tr>`
+      )
+      .join('') || '<tr><td colspan="5" style="text-align:center;color:#999">Sin repartos todavía</td></tr>';
+
+  document.querySelectorAll('#reparto-tabla-body .btn-eliminar-fila').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Borrar este reparto?')) return;
+      await fetch(`/api/distribuciones/${btn.dataset.id}`, { method: 'DELETE' });
+      cargarReparto();
+    });
+  });
+}
+
+// ==================== IMPORTAR RECETAS (CSV) ====================
+
+document.getElementById('btn-importar-recetas-csv').addEventListener('click', async () => {
+  const input = document.getElementById('recetas-archivo');
+  const progreso = document.getElementById('recetas-progreso');
+  const resultado = document.getElementById('recetas-resultado');
+  resultado.innerHTML = '';
+
+  if (!input.files.length) {
+    alert('Elige un archivo CSV primero');
+    return;
+  }
+
+  const texto = await input.files[0].text();
+  const filas = parsearCSV(texto);
+
+  if (!filas.length) {
+    progreso.textContent = 'El archivo está vacío o no se pudo leer.';
+    return;
+  }
+
+  const columnasRequeridas = ['producto', 'insumo', 'cantidad'];
+  const columnasFaltantes = columnasRequeridas.filter((c) => !(c in filas[0]));
+  if (columnasFaltantes.length) {
+    progreso.textContent = `Faltan columnas en el CSV: ${columnasFaltantes.join(', ')}`;
+    return;
+  }
+
+  const btn = document.getElementById('btn-importar-recetas-csv');
+  btn.disabled = true;
+  progreso.textContent = `Importando ${filas.length} fila(s)...`;
+
+  try {
+    const resp = await fetch('/api/recetas/importar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filas }),
+    });
+    const data = await resp.json();
+
+    progreso.textContent = '';
+    btn.disabled = false;
+
+    if (!resp.ok) {
+      resultado.innerHTML = `<p style="color:#b8232f">${escapeHtml(data.error || 'No se pudo importar')}</p>`;
+      return;
+    }
+
+    resultado.innerHTML = `
+      <div style="background:white;border-radius:10px;padding:14px;margin-bottom:10px">
+        <div style="font-size:16px;font-weight:bold;color:#1a7d3a">✅ ${data.recetasGuardadas} receta(s) guardadas</div>
+        ${data.errores.length ? `<div style="margin-top:8px;color:#b8232f;font-size:13px">⚠️ ${data.errores.length} fila(s) con problemas:</div>` : ''}
+      </div>
+      ${
+        data.errores.length
+          ? `<div style="background:white;border-radius:10px;padding:12px;max-height:300px;overflow-y:auto;font-size:12px;color:#b8232f;line-height:1.6">
+              ${data.errores.map((e) => `• ${escapeHtml(e)}`).join('<br>')}
+            </div>`
+          : ''
+      }`;
+  } catch (err) {
+    progreso.textContent = '';
+    btn.disabled = false;
+    resultado.innerHTML = '<p style="color:#b8232f">No se pudo conectar, revisa tu internet e intenta de nuevo.</p>';
+  }
+});
 
 // ==================== TIEMPO REAL: refresca sola cuando llega un pedido (ej. de la web) ====================
 
