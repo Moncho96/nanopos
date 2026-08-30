@@ -267,6 +267,8 @@
     <button class="item" id="btn-abrir-importar">📥 Importar historial</button>
     <button class="item" id="btn-abrir-conteo">📦 Conteo de inventario</button>
     <button class="item" id="btn-abrir-compras">🛒 Planeación de compras</button>
+    <button class="item" id="btn-abrir-reparto">🤝 Reparto de utilidades</button>
+    <button class="item" id="btn-abrir-importar-recetas">📋 Importar recetas</button>
     <button class="item" id="btn-abrir-menu-admin">🍽️ Menú (productos e insumos)</button>
     <button class="item" id="btn-abrir-historial">🕓 Historial de pedidos</button>
     <button class="item" id="btn-abrir-corte">📊 Corte de caja</button>
@@ -319,6 +321,64 @@
 
   <h3 style="padding:0 12px">Compras anteriores</h3>
   <div id="historial-compras" style="padding:0 12px 24px"></div>
+</div>
+
+<!-- Reparto de utilidades -->
+<div class="full-overlay" id="overlay-reparto">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-reparto">✕</button>
+    <span class="titulo">Reparto de utilidades</span>
+  </div>
+
+  <div id="reparto-resumen"></div>
+
+  <h3 style="padding:0 12px">Registrar reparto</h3>
+  <div class="form-inline">
+    <input type="date" id="reparto-fecha" />
+    <input type="text" id="reparto-socio" placeholder="Socio (ej. Nano, Papá)" />
+  </div>
+  <div class="form-inline">
+    <input type="text" inputmode="decimal" id="reparto-monto" placeholder="Monto" style="width:100px" />
+    <select id="reparto-metodo">
+      <option value="efectivo">Efectivo</option>
+      <option value="transferencia">Transferencia</option>
+      <option value="tarjeta">Tarjeta</option>
+    </select>
+    <input type="text" id="reparto-nota" placeholder="Nota (opcional)" />
+    <button id="btn-agregar-reparto">+ Registrar</button>
+  </div>
+
+  <table class="tabla-simple">
+    <thead><tr><th>Fecha</th><th>Socio</th><th class="num">Monto</th><th>Método</th><th></th></tr></thead>
+    <tbody id="reparto-tabla-body"></tbody>
+  </table>
+</div>
+
+<!-- Importar recetas -->
+<div class="full-overlay" id="overlay-importar-recetas">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-importar-recetas">✕</button>
+    <span class="titulo">Importar recetas</span>
+  </div>
+  <div style="padding:12px;font-size:13px;color:#666;line-height:1.6">
+    Sube un CSV para dar de alta recetas de varios productos de un jalón. Si el insumo no
+    existe todavía, se crea solo con la unidad y costo que pongas.
+    <br><br>
+    Recuerda: la cantidad es por <strong>1 pieza/unidad base</strong> del producto — si tiene
+    variantes tipo "Orden" con multiplicador, ese multiplicador se aplica aparte (en Menú → 📋
+    de cada producto), no aquí.
+    <br><br>
+    Columnas requeridas (en este orden, con encabezado):<br>
+    <code style="font-size:11px;background:#eee;padding:4px 6px;border-radius:4px;display:inline-block;margin-top:4px">
+      producto,insumo,unidad,cantidad,costo_unitario_insumo
+    </code>
+  </div>
+  <div class="form-inline">
+    <input type="file" id="recetas-archivo" accept=".csv" style="flex:1" />
+    <button id="btn-importar-recetas-csv">Importar</button>
+  </div>
+  <div id="recetas-progreso" style="padding:0 12px;font-size:13px;color:#666"></div>
+  <div id="recetas-resultado" style="padding:0 12px 24px"></div>
 </div>
 
 <!-- Importar historial -->
