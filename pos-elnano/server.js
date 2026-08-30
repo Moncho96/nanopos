@@ -544,6 +544,100 @@ app.get('/api/compras', async (req, res) => {
 });
 
 
+// ---------- Importar recetas en lote (CSV: producto, insumo, unidad, cantidad, costo) ----------
+app.post('/api/recetas/importar', async (req, res) => {
+  const { filas } = req.body;
+  if (!filas || !filas.length) {
+    return res.status(400).json({ error: 'No se recibieron filas' });
+  }
+
+  const { rows: productos } = await pool.query('SELECT * FROM productos');
+  const productoPorNombre = {};
+  productos.forEach((p) => {
+    productoPorNombre[p.nombre.trim().toLowerCase()] = p;
+  });
+
+  const errores = [];
+  let recetasGuardadas = 0;
+
+  for (const f of filas) {
+    const producto = productoPorNombre[(f.producto || '').trim().toLowerCase()];
+    if (!producto) {
+      errores.push(`Producto no encontrado: "${f.producto}"`);
+      continue;
+    }
+    const nombreInsumo = (f.insumo || '').trim();
+    if (!nombreInsumo) {
+      errores.push(`Falta el insumo para "${f.producto}"`);
+      continue;
+    }
+    const cantidad = Number(f.cantidad);
+    if (!cantidad || cantidad <= 0) {
+      errores.push(`Cantidad inválida para "${f.producto}" / "${nombreInsumo}"`);
+      continue;
+    }
+
+    try {
+      // Busca el insumo por nombre; si no existe, lo crea con la unidad y costo dados
+      let { rows: insumoRows } = await pool.query(
+        'SELECT * FROM insumos WHERE LOWER(nombre) = LOWER($1)',
+        [nombreInsumo]
+      );
+      let insumo = insumoRows[0];
+      if (!insumo) {
+        const unidad = (f.unidad || 'pza').trim();
+        const costo = Number(f.costo_unitario_insumo) || 0;
+        const { rows: nuevoInsumo } = await pool.query(
+          'INSERT INTO insumos (nombre, unidad, costo_unitario) VALUES ($1,$2,$3) RETURNING *',
+          [nombreInsumo, unidad, costo]
+        );
+        insumo = nuevoInsumo[0];
+      } else if (f.costo_unitario_insumo) {
+        await pool.query('UPDATE insumos SET costo_unitario = $1 WHERE id = $2', [Number(f.costo_unitario_insumo), insumo.id]);
+      }
+
+      await pool.query(
+        `INSERT INTO producto_insumos (producto_id, insumo_id, cantidad)
+         VALUES ($1,$2,$3)
+         ON CONFLICT (producto_id, insumo_id) DO UPDATE SET cantidad = EXCLUDED.cantidad`,
+        [producto.id, insumo.id, cantidad]
+      );
+      recetasGuardadas++;
+    } catch (err) {
+      errores.push(`Error guardando "${f.producto}" / "${nombreInsumo}": ${err.message}`);
+    }
+  }
+
+  res.json({ recetasGuardadas, errores });
+});
+
+// ---------- Reparto de utilidades entre socios ----------
+app.post('/api/distribuciones', async (req, res) => {
+  const { fecha, socio, monto, metodo_pago, nota } = req.body;
+  if (!fecha || !socio || !monto) {
+    return res.status(400).json({ error: 'Falta la fecha, el socio o el monto' });
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO distribuciones_utilidad (fecha, socio, monto, metodo_pago, nota)
+     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [fecha, socio.trim(), monto, metodo_pago || null, nota || null]
+  );
+  res.json(rows[0]);
+});
+
+app.get('/api/distribuciones', async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT * FROM distribuciones_utilidad ORDER BY fecha DESC, creado_en DESC LIMIT 200'
+  );
+  res.json(rows);
+});
+
+app.delete('/api/distribuciones/:id', async (req, res) => {
+  await pool.query('DELETE FROM distribuciones_utilidad WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono } = req.query;
@@ -728,12 +822,14 @@ app.post('/api/pedidos', async (req, res) => {
     const costoEnvio = Number(costo_envio) || 0;
     const total = items.reduce((sum, it) => sum + it.cantidad * it.precio_unitario, 0) + costoEnvio;
 
+    const fechaNegocioHoy = fechaNegocioActualJS();
     const { rows: contadorRows } = await client.query(
       `SELECT COUNT(*)::int AS n FROM pedidos
-       WHERE sucursal_id = $1 AND ${fechaNegocioSQL('creado_en')} = ${fechaNegocioSQL('now()')}`,
-      [sucursal_id]
+       WHERE sucursal_id = $1 AND ${fechaNegocioSQL('creado_en')} = $2`,
+      [sucursal_id, fechaNegocioHoy]
     );
     const numeroDia = contadorRows[0].n + 1;
+    console.log(`[numero_dia] sucursal=${sucursal_id} fecha_negocio=${fechaNegocioHoy} contador_previo=${contadorRows[0].n} numero_asignado=${numeroDia}`);
 
     const pedidoRes = await client.query(
       `INSERT INTO pedidos (sucursal_id, cliente_id, cliente_nombre, tipo, notas, total, costo_envio, numero_dia, origen)
@@ -1081,6 +1177,22 @@ const CORTE_CUTOFF_HORAS = 6; // hora local (0-23) en la que empieza un nuevo d�
 
 function fechaNegocioSQL(columna) {
   return `((${columna} AT TIME ZONE 'UTC' AT TIME ZONE '${ZONA_HORARIA_NEGOCIO}') - INTERVAL '${CORTE_CUTOFF_HORAS} hours')::date`;
+}
+
+// Calcula la fecha de negocio de "ahorita" directo en JavaScript (en vez de dejar que
+// Postgres use now(), que dentro de una transacción regresa la hora en que empezó la
+// transacción, no la hora real del servidor — evitamos así cualquier ambigüedad).
+function fechaNegocioActualJS() {
+  const ahoraUTC = new Date();
+  const offsetHorasMonterrey = 6; // America/Monterrey es UTC-6 todo el año (México ya no usa horario de verano)
+  const monterrey = new Date(ahoraUTC.getTime() - offsetHorasMonterrey * 60 * 60 * 1000);
+  if (monterrey.getUTCHours() < CORTE_CUTOFF_HORAS) {
+    monterrey.setUTCDate(monterrey.getUTCDate() - 1);
+  }
+  const y = monterrey.getUTCFullYear();
+  const m = String(monterrey.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(monterrey.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 // ---------- Corte de caja ----------
