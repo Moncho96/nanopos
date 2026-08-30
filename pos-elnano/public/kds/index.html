@@ -24,6 +24,12 @@
   .ticket.en_preparacion { border-color: #007bff; }
   .ticket.listo { border-color: #28a745; }
   .ticket .top { display: flex; justify-content: space-between; font-size: 13px; opacity: 0.7; margin-bottom: 6px; }
+  .cronometro { font-weight: bold; font-variant-numeric: tabular-nums; }
+  .cronometro.verde { color: #4ade80; }
+  .cronometro.amarillo { color: #facc15; }
+  .cronometro.rojo { color: #f87171; }
+  .promedio-bar { background: #262626; color: #ccc; padding: 8px 16px; font-size: 13px; text-align: center; }
+  .promedio-bar strong { color: white; }
   .ticket .items { font-size: 15px; line-height: 1.5; }
   .ticket .items .item { display: flex; justify-content: space-between; }
   .ticket .cliente { font-size: 13px; margin-top: 6px; opacity: 0.8; }
@@ -38,6 +44,8 @@
   <h1>👨‍🍳 El Nano — Cocina</h1>
   <select id="sucursal-select"></select>
 </header>
+
+<div class="promedio-bar" id="promedio-bar">⏱️ Calculando tiempo promedio...</div>
 
 <div class="board">
   <div class="columna">

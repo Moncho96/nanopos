@@ -2,6 +2,9 @@ let pedidos = [];
 let sucursalId = null;
 const socket = io();
 
+const UMBRAL_AMARILLO_MIN = 10;
+const UMBRAL_ROJO_MIN = 15;
+
 async function cargarSucursales() {
   const sucursales = await fetch('/api/sucursales').then((r) => r.json());
   const select = document.getElementById('sucursal-select');
@@ -11,9 +14,23 @@ async function cargarSucursales() {
     sucursalId = Number(select.value);
     socket.emit('join_sucursal', sucursalId);
     cargarPedidos();
+    cargarPromedio();
   });
   socket.emit('join_sucursal', sucursalId);
   cargarPedidos();
+  cargarPromedio();
+  setInterval(cargarPromedio, 60000); // refresca el promedio cada minuto
+  setInterval(actualizarCronometros, 1000); // el cronómetro de cada ticket, en vivo
+}
+
+async function cargarPromedio() {
+  const data = await fetch(`/api/kds/tiempo-promedio?sucursal_id=${sucursalId}`).then((r) => r.json());
+  const barra = document.getElementById('promedio-bar');
+  if (!data.promedioMinutos) {
+    barra.textContent = '⏱️ Todavía no hay pedidos terminados hoy para calcular el promedio';
+  } else {
+    barra.innerHTML = `⏱️ Tiempo promedio de hoy: <strong>${data.promedioMinutos} min</strong> (basado en ${data.cantidad} pedido${data.cantidad === 1 ? '' : 's'})`;
+  }
 }
 
 async function cargarPedidos() {
@@ -39,10 +56,10 @@ function render() {
   document.querySelectorAll('[data-avanzar]').forEach((btn) => {
     btn.addEventListener('click', () => avanzarEstado(Number(btn.dataset.avanzar), btn.dataset.destino));
   });
+  actualizarCronometros();
 }
 
 function renderTicket(pedido) {
-  const hora = new Date(pedido.creado_en).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
   const items = pedido.items
     .map((it) => {
       const opciones = it.opciones_seleccionadas || [];
@@ -69,12 +86,35 @@ function renderTicket(pedido) {
     <div class="ticket ${pedido.estado}">
       <div class="top">
         <span>#${pedido.numero_dia ?? pedido.id} · ${pedido.tipo}</span>
-        <span>${hora}</span>
+        <span class="cronometro" data-creado="${pedido.creado_en}" data-listo="${pedido.listo_en || ''}">--:--</span>
       </div>
       <div class="items">${items}</div>
       ${pedido.cliente_nombre ? `<div class="cliente">${pedido.cliente_nombre} · ${pedido.cliente_telefono || ''}</div>` : ''}
       ${boton}
     </div>`;
+}
+
+function actualizarCronometros() {
+  document.querySelectorAll('.cronometro').forEach((el) => {
+    const creado = new Date(el.dataset.creado).getTime();
+    const finCongelado = el.dataset.listo ? new Date(el.dataset.listo).getTime() : null;
+    const finReferencia = finCongelado || Date.now();
+    const totalSegundos = Math.max(0, Math.floor((finReferencia - creado) / 1000));
+    const minutos = Math.floor(totalSegundos / 60);
+    const segundos = totalSegundos % 60;
+    el.textContent = `${String(minutos).padStart(2, '0')}:${String(segundos).padStart(2, '0')}`;
+
+    el.classList.remove('verde', 'amarillo', 'rojo');
+    if (finCongelado) {
+      el.classList.add('verde'); // ya está listo, no hace falta alarmar con color
+    } else if (minutos >= UMBRAL_ROJO_MIN) {
+      el.classList.add('rojo');
+    } else if (minutos >= UMBRAL_AMARILLO_MIN) {
+      el.classList.add('amarillo');
+    } else {
+      el.classList.add('verde');
+    }
+  });
 }
 
 async function avanzarEstado(pedidoId, destino) {
@@ -113,6 +153,7 @@ socket.on('pedido_actualizado', (pedidoActualizado) => {
       const itemsDespues = JSON.stringify((pedidoActualizado.items || []).map((i) => [i.id, i.cancelado]));
       pedidos[idx] = { ...pedidos[idx], ...pedidoActualizado };
       if (itemsAntes !== itemsDespues) sonarAviso();
+      if (pedidoActualizado.estado === 'listo') cargarPromedio();
     }
   }
   render();
