@@ -638,6 +638,28 @@ app.delete('/api/distribuciones/:id', async (req, res) => {
 });
 
 
+// ---------- Tiempo promedio de cocina (para el KDS) ----------
+app.get('/api/kds/tiempo-promedio', async (req, res) => {
+  const { sucursal_id } = req.query;
+  if (!sucursal_id) return res.status(400).json({ error: 'Falta sucursal_id' });
+
+  const fechaHoy = fechaNegocioActualJS();
+  const { rows } = await pool.query(
+    `SELECT AVG(EXTRACT(EPOCH FROM (listo_en - creado_en))) AS promedio_segundos, COUNT(*)::int AS cantidad
+     FROM pedidos
+     WHERE sucursal_id = $1 AND listo_en IS NOT NULL AND cancelado = false
+       AND ${fechaNegocioSQL('creado_en')} = $2`,
+    [sucursal_id, fechaHoy]
+  );
+
+  const segundos = rows[0].promedio_segundos ? Number(rows[0].promedio_segundos) : null;
+  res.json({
+    promedioMinutos: segundos ? Math.round((segundos / 60) * 10) / 10 : null,
+    cantidad: rows[0].cantidad,
+  });
+});
+
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono, buscar } = req.query;
@@ -988,8 +1010,13 @@ app.get('/api/pedidos', async (req, res) => {
 app.patch('/api/pedidos/:id/estado', async (req, res) => {
   const { id } = req.params;
   const { estado } = req.body;
+
+  let campoExtra = '';
+  if (estado === 'en_preparacion') campoExtra = ', inicio_preparacion = COALESCE(inicio_preparacion, now())';
+  if (estado === 'listo') campoExtra = ', listo_en = now()';
+
   const { rows } = await pool.query(
-    `UPDATE pedidos SET estado = $1, actualizado_en = now() WHERE id = $2 RETURNING *`,
+    `UPDATE pedidos SET estado = $1, actualizado_en = now()${campoExtra} WHERE id = $2 RETURNING *`,
     [estado, id]
   );
   const pedido = rows[0];
