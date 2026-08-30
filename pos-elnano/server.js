@@ -640,10 +640,48 @@ app.delete('/api/distribuciones/:id', async (req, res) => {
 
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
-  const { telefono } = req.query;
-  if (!telefono) return res.json([]);
-  const { rows } = await pool.query('SELECT * FROM clientes WHERE telefono = $1', [telefono]);
+  const { telefono, buscar } = req.query;
+  if (telefono) {
+    const { rows } = await pool.query('SELECT * FROM clientes WHERE telefono = $1', [telefono]);
+    return res.json(rows);
+  }
+  let query = 'SELECT * FROM clientes WHERE 1=1';
+  const params = [];
+  if (buscar) {
+    params.push(`%${buscar}%`);
+    query += ` AND (nombre ILIKE $${params.length} OR telefono ILIKE $${params.length} OR colonia ILIKE $${params.length})`;
+  }
+  query += ' ORDER BY nombre LIMIT 300';
+  const { rows } = await pool.query(query, params);
   res.json(rows);
+});
+
+app.patch('/api/clientes/:id', async (req, res) => {
+  const { nombre, telefono, direccion, colonia } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE clientes SET
+         nombre = COALESCE($1, nombre),
+         telefono = COALESCE($2, telefono),
+         direccion = COALESCE($3, direccion),
+         colonia = COALESCE($4, colonia)
+       WHERE id = $5 RETURNING *`,
+      [nombre, telefono, direccion, colonia, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Cliente no encontrado' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: 'Ya existe un cliente con ese teléfono' });
+  }
+});
+
+app.delete('/api/clientes/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM clientes WHERE id = $1', [req.params.id]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: 'No se puede borrar: este cliente ya tiene pedidos registrados' });
+  }
 });
 
 app.post('/api/clientes', async (req, res) => {
@@ -823,13 +861,17 @@ app.post('/api/pedidos', async (req, res) => {
     const total = items.reduce((sum, it) => sum + it.cantidad * it.precio_unitario, 0) + costoEnvio;
 
     const fechaNegocioHoy = fechaNegocioActualJS();
+    // Contador atómico: Postgres serializa este UPSERT, así que dos pedidos que
+    // lleguen casi al mismo tiempo NUNCA pueden sacar el mismo número.
     const { rows: contadorRows } = await client.query(
-      `SELECT COUNT(*)::int AS n FROM pedidos
-       WHERE sucursal_id = $1 AND ${fechaNegocioSQL('creado_en')} = $2`,
+      `INSERT INTO contadores_pedidos_dia (sucursal_id, fecha, contador)
+       VALUES ($1, $2, 1)
+       ON CONFLICT (sucursal_id, fecha) DO UPDATE SET contador = contadores_pedidos_dia.contador + 1
+       RETURNING contador`,
       [sucursal_id, fechaNegocioHoy]
     );
-    const numeroDia = contadorRows[0].n + 1;
-    console.log(`[numero_dia] sucursal=${sucursal_id} fecha_negocio=${fechaNegocioHoy} contador_previo=${contadorRows[0].n} numero_asignado=${numeroDia}`);
+    const numeroDia = contadorRows[0].contador;
+    console.log(`[numero_dia] sucursal=${sucursal_id} fecha_negocio=${fechaNegocioHoy} numero_asignado=${numeroDia}`);
 
     const pedidoRes = await client.query(
       `INSERT INTO pedidos (sucursal_id, cliente_id, cliente_nombre, tipo, notas, total, costo_envio, numero_dia, origen)
