@@ -2,8 +2,13 @@
   "name": "El Nano - Pide en línea",
   "short_name": "El Nano",
   "start_url": "/pedir",
+  "scope": "/pedir",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#f4f4f4",
   "theme_color": "#b8232f",
-  "icons": []
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
 }
