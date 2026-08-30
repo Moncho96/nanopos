@@ -387,18 +387,25 @@ function cerrarOverlayPedido() {
 
 function renderCatSidebarOverlay() {
   const cont = document.getElementById('cat-sidebar');
-  cont.innerHTML = state.categorias
-    .map(
-      (c) => `
+  const tabTodos = `
+    <div class="cat-sidebar-item ${state.categoriaActivaOverlay === 'todos' ? 'active' : ''}" data-id="todos">
+      <div>🍴</div>
+      <div>Todos</div>
+    </div>`;
+  cont.innerHTML =
+    tabTodos +
+    state.categorias
+      .map(
+        (c) => `
       <div class="cat-sidebar-item ${c.id === state.categoriaActivaOverlay ? 'active' : ''}" data-id="${c.id}">
         <div>${CATEGORIA_EMOJI[c.nombre] || '🍴'}</div>
         <div>${c.nombre}</div>
       </div>`
-    )
-    .join('');
+      )
+      .join('');
   cont.querySelectorAll('.cat-sidebar-item').forEach((el) => {
     el.addEventListener('click', () => {
-      state.categoriaActivaOverlay = Number(el.dataset.id);
+      state.categoriaActivaOverlay = el.dataset.id === 'todos' ? 'todos' : Number(el.dataset.id);
       document.getElementById('buscador-producto').value = '';
       renderCatSidebarOverlay();
       renderProductosOverlay();
@@ -421,6 +428,8 @@ function renderProductosOverlay() {
 
   const lista = busqueda
     ? state.productos.filter((p) => p.nombre.toLowerCase().includes(busqueda))
+    : state.categoriaActivaOverlay === 'todos'
+    ? state.productos
     : state.productos.filter((p) => p.categoria_id === state.categoriaActivaOverlay);
 
   const categoriaPorId = {};
