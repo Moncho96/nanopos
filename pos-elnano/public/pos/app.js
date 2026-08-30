@@ -2727,3 +2727,9 @@ function abrirWhatsAppCliente(pedido) {
   const mensaje = construirMensajeWhatsApp(pedido);
   window.open(`https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`, '_blank');
 }
+
+// Registra el service worker para que Android/Chrome ofrezca "Instalar app"
+// y así abra en pantalla completa, sin la barra del navegador.
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js').catch(() => {});
+}

@@ -2,8 +2,13 @@
   "name": "El Nano - Pedidos",
   "short_name": "El Nano POS",
   "start_url": "/pos",
+  "scope": "/pos",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#f4f4f4",
   "theme_color": "#b8232f",
-  "icons": []
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
 }
