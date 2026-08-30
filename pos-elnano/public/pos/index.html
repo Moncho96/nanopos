@@ -231,6 +231,7 @@
         <button class="btn-mobile-productos" id="btn-mostrar-productos">+ Productos</button>
         <input type="text" id="ticket-cliente-nombre" placeholder="Nombre del cliente * (obligatorio)" />
         <input type="tel" id="ticket-cliente-telefono" placeholder="Teléfono (opcional)" />
+        <div id="ticket-cliente-encontrado" style="display:none;font-size:12px;color:#0056b3;font-weight:600;margin:-6px 0 6px">👤 Cliente conocido — datos completados</div>
         <input type="text" id="ticket-cliente-direccion" placeholder="Dirección (domicilio)" style="display:none" />
         <select id="ticket-cliente-colonia" style="display:none; width:100%">
           <option value="">Colonia</option>
@@ -267,6 +268,7 @@
     <button class="item" id="btn-abrir-importar">📥 Importar historial</button>
     <button class="item" id="btn-abrir-conteo">📦 Conteo de inventario</button>
     <button class="item" id="btn-abrir-compras">🛒 Planeación de compras</button>
+    <button class="item" id="btn-abrir-clientes">👥 Clientes</button>
     <button class="item" id="btn-abrir-reparto">🤝 Reparto de utilidades</button>
     <button class="item" id="btn-abrir-importar-recetas">📋 Importar recetas</button>
     <button class="item" id="btn-abrir-menu-admin">🍽️ Menú (productos e insumos)</button>
@@ -321,6 +323,21 @@
 
   <h3 style="padding:0 12px">Compras anteriores</h3>
   <div id="historial-compras" style="padding:0 12px 24px"></div>
+</div>
+
+<!-- Catálogo de clientes -->
+<div class="full-overlay" id="overlay-clientes">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-clientes">✕</button>
+    <span class="titulo">Clientes</span>
+  </div>
+  <div class="form-inline">
+    <input type="text" id="clientes-buscar" placeholder="Buscar por nombre, teléfono o colonia..." style="flex:1" />
+  </div>
+  <table class="tabla-simple">
+    <thead><tr><th>Nombre</th><th>Teléfono</th><th>Dirección</th><th>Colonia</th><th></th></tr></thead>
+    <tbody id="clientes-tabla-body"></tbody>
+  </table>
 </div>
 
 <!-- Reparto de utilidades -->
