@@ -2,8 +2,13 @@
   "name": "El Nano - Cocina",
   "short_name": "El Nano KDS",
   "start_url": "/kds",
+  "scope": "/kds",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#1a1a1a",
   "theme_color": "#b8232f",
-  "icons": []
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
 }
