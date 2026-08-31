@@ -61,6 +61,7 @@ function render() {
 
 function renderTicket(pedido) {
   const items = pedido.items
+    .filter((it) => it.estado !== 'entregado') // no repetir lo que ya se sirvió antes de reabrirse
     .map((it) => {
       const opciones = it.opciones_seleccionadas || [];
       const detalle = opciones.length
@@ -82,12 +83,15 @@ function renderTicket(pedido) {
     boton = `<button class="btn-entregar" data-avanzar="${pedido.id}" data-destino="entregado">Entregado</button>`;
   }
 
+  const tieneHistorialPrevio = pedido.items.some((it) => it.estado === 'entregado');
+
   return `
     <div class="ticket ${pedido.estado}">
       <div class="top">
         <span>#${pedido.numero_dia ?? pedido.id} · ${pedido.tipo}</span>
         <span class="cronometro" data-creado="${pedido.creado_en}" data-listo="${pedido.listo_en || ''}">--:--</span>
       </div>
+      ${tieneHistorialPrevio ? '<div style="font-size:11px;color:#facc15;margin-bottom:4px">🔄 Se agregó algo nuevo a este pedido</div>' : ''}
       <div class="items">${items}</div>
       ${pedido.cliente_nombre ? `<div class="cliente">${pedido.cliente_nombre} · ${pedido.cliente_telefono || ''}</div>` : ''}
       ${boton}
@@ -143,7 +147,9 @@ socket.on('nuevo_pedido', (pedido) => {
 });
 
 socket.on('pedido_actualizado', (pedidoActualizado) => {
-  if (pedidoActualizado.estado === 'entregado' || pedidoActualizado.estado === 'cancelado' || pedidoActualizado.cancelado) {
+  const sigueActivo = ['recibido', 'en_preparacion', 'listo'].includes(pedidoActualizado.estado) && !pedidoActualizado.cancelado;
+
+  if (!sigueActivo) {
     pedidos = pedidos.filter((p) => p.id !== pedidoActualizado.id);
   } else {
     const idx = pedidos.findIndex((p) => p.id === pedidoActualizado.id);
@@ -154,6 +160,11 @@ socket.on('pedido_actualizado', (pedidoActualizado) => {
       pedidos[idx] = { ...pedidos[idx], ...pedidoActualizado };
       if (itemsAntes !== itemsDespues) sonarAviso();
       if (pedidoActualizado.estado === 'listo') cargarPromedio();
+    } else {
+      // El pedido no estaba en el tablero (ya se había entregado) y ahora se reabrió
+      // porque le agregaron algo nuevo — lo regresamos al tablero con aviso.
+      pedidos.push(pedidoActualizado);
+      sonarAviso();
     }
   }
   render();
