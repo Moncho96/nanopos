@@ -108,7 +108,17 @@ async function recalcularTotalPedido(pedidoId) {
   const { rows: pedRows } = await pool.query('SELECT costo_envio FROM pedidos WHERE id = $1', [pedidoId]);
   const costoEnvio = Number(pedRows[0]?.costo_envio || 0);
   const total = Number(sumaRows[0].suma) + costoEnvio;
-  await pool.query('UPDATE pedidos SET total = $1 WHERE id = $2', [total, pedidoId]);
+
+  // Si el pedido ya tenía pagos registrados, revisa si el nuevo total sigue cubierto
+  // (por ejemplo, si se agregó un producto después de cobrar, ya no alcanza)
+  const { rows: pagosRows } = await pool.query(
+    'SELECT COALESCE(SUM(monto), 0) AS total_pagado FROM pagos WHERE pedido_id = $1',
+    [pedidoId]
+  );
+  const totalPagado = Number(pagosRows[0].total_pagado);
+  const cubierto = totalPagado >= total - 0.01;
+
+  await pool.query('UPDATE pedidos SET total = $1, pagado = $2 WHERE id = $3', [total, cubierto, pedidoId]);
   return total;
 }
 
@@ -164,6 +174,26 @@ app.post('/api/categorias', async (req, res) => {
   if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Falta el nombre' });
   const { rows } = await pool.query('INSERT INTO categorias (nombre) VALUES ($1) RETURNING *', [nombre.trim()]);
   res.json(rows[0]);
+});
+
+app.patch('/api/categorias/:id', async (req, res) => {
+  const { nombre } = req.body;
+  if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Falta el nombre' });
+  const { rows } = await pool.query(
+    'UPDATE categorias SET nombre = $1 WHERE id = $2 RETURNING *',
+    [nombre.trim(), req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Categoría no encontrada' });
+  res.json(rows[0]);
+});
+
+app.delete('/api/categorias/:id', async (req, res) => {
+  const { rows: enUso } = await pool.query('SELECT COUNT(*)::int AS n FROM productos WHERE categoria_id = $1', [req.params.id]);
+  if (enUso[0].n > 0) {
+    return res.status(400).json({ error: `No se puede borrar: hay ${enUso[0].n} producto(s) en esta categoría. Muévelos o bórralos primero.` });
+  }
+  await pool.query('DELETE FROM categorias WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
 });
 
 // ---------- Administración del menú: productos ----------
@@ -304,14 +334,69 @@ app.delete('/api/productos/:id/receta/:insumoId', async (req, res) => {
 
 
 // ---------- Opciones de modificador: multiplicador e insumos extra ----------
-app.patch('/api/opciones/:id', async (req, res) => {
-  const { multiplicador } = req.body;
+// ---------- Grupos de modificadores (variantes/extras) ----------
+app.post('/api/productos/:id/grupos', async (req, res) => {
+  const { nombre, tipo, obligatorio } = req.body;
+  if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Falta el nombre del grupo' });
   const { rows } = await pool.query(
-    'UPDATE opciones_modificador SET multiplicador = $1 WHERE id = $2 RETURNING *',
-    [multiplicador, req.params.id]
+    `INSERT INTO grupos_modificadores (producto_id, nombre, tipo, obligatorio, orden)
+     VALUES ($1,$2,$3,$4, (SELECT COALESCE(MAX(orden),0)+1 FROM grupos_modificadores WHERE producto_id = $1))
+     RETURNING *`,
+    [req.params.id, nombre.trim(), tipo === 'extra' ? 'extra' : 'variante', obligatorio === false ? false : true]
+  );
+  res.json(rows[0]);
+});
+
+app.patch('/api/grupos/:id', async (req, res) => {
+  const { nombre, tipo, obligatorio } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE grupos_modificadores SET
+       nombre = COALESCE($1, nombre),
+       tipo = COALESCE($2, tipo),
+       obligatorio = COALESCE($3, obligatorio)
+     WHERE id = $4 RETURNING *`,
+    [nombre, tipo, obligatorio, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Grupo no encontrado' });
+  res.json(rows[0]);
+});
+
+app.delete('/api/grupos/:id', async (req, res) => {
+  await pool.query('DELETE FROM grupos_modificadores WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+app.post('/api/grupos/:id/opciones', async (req, res) => {
+  const { nombre, precio, multiplicador } = req.body;
+  if (!nombre || !nombre.trim() || precio === undefined) {
+    return res.status(400).json({ error: 'Falta el nombre o el precio de la opción' });
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO opciones_modificador (grupo_id, nombre, precio, multiplicador, orden)
+     VALUES ($1,$2,$3,$4, (SELECT COALESCE(MAX(orden),0)+1 FROM opciones_modificador WHERE grupo_id = $1))
+     RETURNING *`,
+    [req.params.id, nombre.trim(), precio, multiplicador || 1]
+  );
+  res.json(rows[0]);
+});
+
+app.patch('/api/opciones/:id', async (req, res) => {
+  const { nombre, precio, multiplicador } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE opciones_modificador SET
+       nombre = COALESCE($1, nombre),
+       precio = COALESCE($2, precio),
+       multiplicador = COALESCE($3, multiplicador)
+     WHERE id = $4 RETURNING *`,
+    [nombre, precio, multiplicador, req.params.id]
   );
   if (!rows.length) return res.status(404).json({ error: 'Opción no encontrada' });
   res.json(rows[0]);
+});
+
+app.delete('/api/opciones/:id', async (req, res) => {
+  await pool.query('DELETE FROM opciones_modificador WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
 });
 
 app.get('/api/opciones/:id/insumos', async (req, res) => {
@@ -952,7 +1037,7 @@ app.post('/api/pedidos', async (req, res) => {
 });
 
 app.get('/api/pedidos', async (req, res) => {
-  const { sucursal_id, estado, pagado, cancelado, fecha_desde, fecha_hasta } = req.query;
+  const { sucursal_id, estado, pagado, cancelado, fecha_desde, fecha_hasta, pendiente } = req.query;
   let query = `
     SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia
     FROM pedidos p
@@ -974,6 +1059,11 @@ app.get('/api/pedidos', async (req, res) => {
   if (cancelado === 'true' || cancelado === 'false') {
     params.push(cancelado === 'true');
     query += ` AND p.cancelado = $${params.length}`;
+  }
+  // "Pendiente" = todavía necesita atención: le falta cobrarse O le falta entregarse
+  // (así un pedido ya pagado pero que sigue en cocina se queda visible y editable)
+  if (pendiente === 'true') {
+    query += ` AND p.cancelado = false AND (p.pagado = false OR p.estado != 'entregado')`;
   }
   if (fecha_desde) {
     params.push(fecha_desde);
