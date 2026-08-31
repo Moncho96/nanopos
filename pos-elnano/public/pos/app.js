@@ -105,7 +105,7 @@ async function cargarPedidosYContar() {
   const sucursalId = document.getElementById('sucursal-select').value;
   if (!sucursalId) return;
 
-  const pendientes = await fetch(`/api/pedidos?sucursal_id=${sucursalId}&pagado=false&cancelado=false`).then((r) => r.json());
+  const pendientes = await fetch(`/api/pedidos?sucursal_id=${sucursalId}&pendiente=true`).then((r) => r.json());
   const counts = { mesa: 0, para_llevar: 0, domicilio: 0 };
   pendientes.forEach((p) => {
     if (counts[p.tipo] !== undefined) counts[p.tipo]++;
@@ -139,6 +139,8 @@ function renderListaPedidos(pedidos) {
   conectarBotonesWhatsApp(cont);
 }
 
+const ESTADO_COCINA_LABEL = { recibido: '🟡 Recibido', en_preparacion: '🔵 En preparación', listo: '🟢 Listo', entregado: '✅ Entregado' };
+
 function renderPedidoRow(pedido) {
   const hora = new Date(pedido.creado_en).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
   const fechaCorta = new Date(pedido.creado_en).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' });
@@ -156,6 +158,10 @@ function renderPedidoRow(pedido) {
   } else {
     badgeEstado = `<span class="badge badge-pendiente">⏳ Por cobrar</span>`;
   }
+  const badgeCocina =
+    !pedido.cancelado && pedido.estado !== 'entregado'
+      ? `<span class="badge" style="background:#eee;color:#555">${ESTADO_COCINA_LABEL[pedido.estado] || pedido.estado}</span>`
+      : '';
 
   return `
     <div class="pedido-row" data-id="${pedido.id}">
@@ -175,7 +181,7 @@ function renderPedidoRow(pedido) {
       <div class="pedido-row-items">${itemsTexto}</div>
       <div class="pedido-row-bottom">
         <span class="pedido-row-total">$${Number(pedido.total).toFixed(2)}</span>
-        ${badgeEstado}
+        <span>${badgeCocina} ${badgeEstado}</span>
       </div>
     </div>`;
 }
@@ -252,7 +258,7 @@ function abrirOverlayNuevo(tipo) {
 
 async function abrirOverlayEditar(pedidoId) {
   const pedido = await fetch(`/api/pedidos/${pedidoId}`).then((r) => r.json());
-  ticketState = { modo: 'editar', tipo: pedido.tipo, pedidoId: pedido.id, pedidoData: pedido, soloLectura: pedido.pagado || pedido.cancelado };
+  ticketState = { modo: 'editar', tipo: pedido.tipo, pedidoId: pedido.id, pedidoData: pedido, soloLectura: pedido.cancelado || pedido.estado === 'entregado' };
   document.getElementById('overlay-titulo').textContent = `Pedido #${pedido.numero_dia ?? pedido.id}` + (pedido.pagado ? ' — cobrado' : '');
   document.querySelector('.overlay-body').classList.remove('vista-productos');
   prepararCamposCliente();
@@ -604,7 +610,8 @@ document.getElementById('btn-t-pago').addEventListener('click', async () => {
     }
   } else {
     document.getElementById('overlay-pedido').classList.remove('abierto');
-    abrirModalCobroDirecto(ticketState.pedidoData);
+    const yaTienePagos = ticketState.pedidoData.pagos && ticketState.pedidoData.pagos.length > 0;
+    abrirModalCobroDirecto(ticketState.pedidoData, yaTienePagos);
   }
 });
 
@@ -2112,6 +2119,7 @@ document.querySelectorAll('[data-submenu]').forEach((btn) => {
 async function cargarMenuAdmin() {
   await recargarCategoriasYProductos();
   renderSelectCategoriasAdmin();
+  renderCategoriasAdmin();
   renderProductosAdmin();
 }
 
@@ -2126,6 +2134,51 @@ function renderSelectCategoriasAdmin() {
     .join('');
 }
 
+function renderCategoriasAdmin() {
+  document.getElementById('categorias-admin-tabla-body').innerHTML = state.categorias
+    .map(
+      (c) => `
+    <tr>
+      <td><input type="text" class="categoria-nombre-edit" data-id="${c.id}" value="${c.nombre}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td style="white-space:nowrap">
+        <button class="btn-eliminar-fila" data-guardar-categoria="${c.id}" title="Guardar">💾</button>
+        <button class="btn-eliminar-fila" data-borrar-categoria="${c.id}" title="Borrar">🗑️</button>
+      </td>
+    </tr>`
+    )
+    .join('');
+
+  document.querySelectorAll('[data-guardar-categoria]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const nombre = document.querySelector(`.categoria-nombre-edit[data-id="${btn.dataset.guardarCategoria}"]`).value.trim();
+      await fetch(`/api/categorias/${btn.dataset.guardarCategoria}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre }),
+      });
+      await recargarCategoriasYProductos();
+      renderSelectCategoriasAdmin();
+      renderCategoriasAdmin();
+      renderProductosAdmin();
+    });
+  });
+  document.querySelectorAll('[data-borrar-categoria]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Borrar esta categoría?')) return;
+      const resp = await fetch(`/api/categorias/${btn.dataset.borrarCategoria}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert(err.error || 'No se pudo borrar');
+        return;
+      }
+      await recargarCategoriasYProductos();
+      renderSelectCategoriasAdmin();
+      renderCategoriasAdmin();
+      renderProductosAdmin();
+    });
+  });
+}
+
 document.getElementById('btn-agregar-categoria').addEventListener('click', async () => {
   const nombre = document.getElementById('nueva-categoria-nombre').value.trim();
   if (!nombre) return;
@@ -2137,6 +2190,7 @@ document.getElementById('btn-agregar-categoria').addEventListener('click', async
   document.getElementById('nueva-categoria-nombre').value = '';
   await recargarCategoriasYProductos();
   renderSelectCategoriasAdmin();
+  renderCategoriasAdmin();
   renderProductosAdmin();
 });
 
@@ -2329,37 +2383,46 @@ async function abrirModalReceta(productoId) {
 
 function renderModalReceta(producto, receta) {
   const grupos = producto.grupos_modificadores || [];
-  const gruposHtml = grupos.length
-    ? grupos
-        .map(
-          (g) => `
-      <div class="modal-grupo">
-        <div class="modal-grupo-titulo">${g.nombre} ${g.tipo === 'variante' ? '(variante — # = a cuántas piezas equivale)' : '(extra)'}</div>
+  const gruposHtml = grupos
+    .map(
+      (g) => `
+      <div class="modal-grupo" style="border:1px solid #eee;border-radius:8px;padding:10px;margin-top:10px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <div class="modal-grupo-titulo" style="margin-bottom:0">${g.nombre} — ${g.tipo === 'variante' ? 'variante' : 'extra'}</div>
+          <button class="btn-eliminar-fila btn-borrar-grupo" data-grupo-id="${g.id}" title="Borrar todo este grupo">🗑️ Grupo</button>
+        </div>
         ${g.opciones
           .map(
             (op) => `
-          <div class="editar-item-row">
-            <span>${op.nombre}</span>
+          <div class="editar-item-row" style="align-items:center">
+            <input type="text" class="opcion-nombre-edit" data-opcion-id="${op.id}" value="${op.nombre}" style="flex:1;padding:5px;border-radius:6px;border:1px solid #ddd;margin-right:6px" />
             <span style="display:flex;align-items:center;gap:6px">
+              $<input type="text" inputmode="decimal" class="opcion-precio-edit" data-opcion-id="${op.id}" value="${op.precio}" style="width:55px;padding:5px;border-radius:6px;border:1px solid #ddd;text-align:center" />
               ${
                 g.tipo === 'variante'
-                  ? `<input type="text" inputmode="decimal" class="opcion-multiplicador" data-opcion-id="${op.id}" value="${op.multiplicador ?? 1}" style="width:46px;padding:5px;border-radius:6px;border:1px solid #ddd;text-align:center" />`
+                  ? `<input type="text" inputmode="decimal" class="opcion-multiplicador" data-opcion-id="${op.id}" value="${op.multiplicador ?? 1}" title="Multiplicador (piezas)" style="width:36px;padding:5px;border-radius:6px;border:1px solid #ddd;text-align:center" />`
                   : ''
               }
-              <button class="btn-eliminar-fila btn-insumos-opcion" data-opcion-id="${op.id}">🧪 Insumos</button>
+              <button class="btn-eliminar-fila btn-guardar-opcion" data-opcion-id="${op.id}" title="Guardar">💾</button>
+              <button class="btn-eliminar-fila btn-insumos-opcion" data-opcion-id="${op.id}" title="Insumos extra">🧪</button>
+              <button class="btn-eliminar-fila btn-borrar-opcion" data-opcion-id="${op.id}" title="Borrar opción">🗑️</button>
             </span>
           </div>`
           )
           .join('')}
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <input type="text" class="nueva-opcion-nombre" data-grupo-id="${g.id}" placeholder="Nueva opción" style="flex:1;padding:6px;border-radius:6px;border:1px dashed #ccc" />
+          <input type="text" inputmode="decimal" class="nueva-opcion-precio" data-grupo-id="${g.id}" placeholder="Precio" style="width:60px;padding:6px;border-radius:6px;border:1px dashed #ccc" />
+          <button class="btn-eliminar-fila btn-agregar-opcion" data-grupo-id="${g.id}">+ Agregar</button>
+        </div>
       </div>`
-        )
-        .join('')
-    : '';
+    )
+    .join('');
 
   const html = `
     <div class="modal-overlay" id="modal-overlay-receta">
       <div class="modal-box">
-        <h3>Receta — ${producto.nombre}</h3>
+        <h3>Receta y variantes — ${producto.nombre}</h3>
         <div style="font-size:12px;color:#888;margin-bottom:10px">Insumos que se gastan al vender <strong>1 pieza/unidad base</strong> (si el producto tiene variantes tipo "Orden", multiplícalo abajo, no aquí)</div>
         <div id="receta-items">
           ${
@@ -2384,7 +2447,23 @@ function renderModalReceta(producto, receta) {
           </div>
           <button class="btn-agregar" id="btn-agregar-insumo-receta" style="width:100%;margin-top:8px;padding:10px;border-radius:8px;border:none">+ Agregar a la receta</button>
         </div>
-        ${gruposHtml}
+
+        <h3 style="margin-top:18px;font-size:15px">Variantes y extras</h3>
+        ${gruposHtml || '<p style="color:#999;font-size:13px">Este producto no tiene variantes ni extras todavía</p>'}
+
+        <div class="modal-grupo" style="border:1px dashed #ccc;border-radius:8px;padding:10px;margin-top:10px">
+          <div class="modal-grupo-titulo">Agregar grupo nuevo (ej. "Presentación", "Extras")</div>
+          <input type="text" id="nuevo-grupo-nombre" placeholder="Nombre del grupo" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ddd;margin-bottom:6px" />
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+            <select id="nuevo-grupo-tipo" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd">
+              <option value="variante">Variante (elige 1, reemplaza el precio)</option>
+              <option value="extra">Extra (elige varios, se suma al precio)</option>
+            </select>
+            <label style="font-size:12px;display:flex;align-items:center;gap:4px"><input type="checkbox" id="nuevo-grupo-obligatorio" checked /> Obligatorio</label>
+          </div>
+          <button class="btn-agregar" id="btn-agregar-grupo" style="width:100%;padding:10px;border-radius:8px;border:none">+ Agregar grupo</button>
+        </div>
+
         <button class="btn-cancelar-modal" id="btn-cerrar-receta">Cerrar</button>
       </div>
     </div>`;
@@ -2422,19 +2501,57 @@ function renderModalReceta(producto, receta) {
     renderModalReceta(producto, recetaNueva);
   });
 
-  document.querySelectorAll('.opcion-multiplicador').forEach((el) => {
+  // ---- Variantes y extras ----
+  document.querySelectorAll('.opcion-multiplicador, .opcion-precio-edit').forEach((el) => {
     el.addEventListener('input', () => {
       el.value = el.value.replace(/[^0-9.]/g, '');
     });
-    el.addEventListener('change', async () => {
-      await fetch(`/api/opciones/${el.dataset.opcionId}`, {
+  });
+  document.querySelectorAll('.btn-guardar-opcion').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.opcionId;
+      const nombre = document.querySelector(`.opcion-nombre-edit[data-opcion-id="${id}"]`).value.trim();
+      const precio = document.querySelector(`.opcion-precio-edit[data-opcion-id="${id}"]`).value;
+      const multEl = document.querySelector(`.opcion-multiplicador[data-opcion-id="${id}"]`);
+      const body = { nombre, precio };
+      if (multEl) body.multiplicador = multEl.value || 1;
+      await fetch(`/api/opciones/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ multiplicador: el.value || 1 }),
+        body: JSON.stringify(body),
       });
-      const g = grupos.find((gr) => gr.opciones.some((o) => o.id === Number(el.dataset.opcionId)));
-      const op = g.opciones.find((o) => o.id === Number(el.dataset.opcionId));
-      op.multiplicador = Number(el.value) || 1;
+      await refrescarProductoYRenderReceta(producto.id);
+    });
+  });
+  document.querySelectorAll('.btn-borrar-opcion').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Borrar esta opción?')) return;
+      await fetch(`/api/opciones/${btn.dataset.opcionId}`, { method: 'DELETE' });
+      await refrescarProductoYRenderReceta(producto.id);
+    });
+  });
+  document.querySelectorAll('.btn-borrar-grupo').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Borrar este grupo completo, con todas sus opciones?')) return;
+      await fetch(`/api/grupos/${btn.dataset.grupoId}`, { method: 'DELETE' });
+      await refrescarProductoYRenderReceta(producto.id);
+    });
+  });
+  document.querySelectorAll('.btn-agregar-opcion').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const grupoId = btn.dataset.grupoId;
+      const nombre = document.querySelector(`.nueva-opcion-nombre[data-grupo-id="${grupoId}"]`).value.trim();
+      const precio = document.querySelector(`.nueva-opcion-precio[data-grupo-id="${grupoId}"]`).value;
+      if (!nombre || !precio) {
+        alert('Falta el nombre o el precio de la opción');
+        return;
+      }
+      await fetch(`/api/grupos/${grupoId}/opciones`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre, precio }),
+      });
+      await refrescarProductoYRenderReceta(producto.id);
     });
   });
   document.querySelectorAll('.btn-insumos-opcion').forEach((btn) => {
@@ -2448,6 +2565,28 @@ function renderModalReceta(producto, receta) {
       abrirModalInsumosOpcion(producto, opcion);
     });
   });
+  document.getElementById('btn-agregar-grupo').addEventListener('click', async () => {
+    const nombre = document.getElementById('nuevo-grupo-nombre').value.trim();
+    const tipo = document.getElementById('nuevo-grupo-tipo').value;
+    const obligatorio = document.getElementById('nuevo-grupo-obligatorio').checked;
+    if (!nombre) {
+      alert('Falta el nombre del grupo');
+      return;
+    }
+    await fetch(`/api/productos/${producto.id}/grupos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre, tipo, obligatorio }),
+    });
+    await refrescarProductoYRenderReceta(producto.id);
+  });
+}
+
+async function refrescarProductoYRenderReceta(productoId) {
+  await recargarCategoriasYProductos();
+  const productoActualizado = state.productos.find((p) => p.id === productoId);
+  const recetaActual = await fetch(`/api/productos/${productoId}/receta`).then((r) => r.json());
+  renderModalReceta(productoActualizado, recetaActual);
 }
 
 // ---------- Insumos extra por opción de variante/extra ----------
@@ -2697,20 +2836,24 @@ function construirMensajeWhatsApp(pedido) {
 
   const subtotal = itemsActivos.reduce((s, it) => s + it.cantidad * it.precio_unitario, 0);
   const envio = Number(pedido.costo_envio) || 0;
-
   const tipoLabel = TIPO_LABELS[pedido.tipo] || pedido.tipo;
-  let mensaje = `Hola ${pedido.cliente_nombre || ''}, este es el resumen de tu pedido #${pedido.numero_dia ?? pedido.id} en El Nano (${tipoLabel}):\n\n${itemsTexto}\n\nSubtotal productos: $${subtotal.toFixed(2)}`;
+
+  let mensaje = `Hola ${pedido.cliente_nombre || ''}, este es el resumen de tu pedido #${pedido.numero_dia ?? pedido.id} en El Nano:\n\n`;
+  mensaje += `👤 Nombre: ${pedido.cliente_nombre || ''}\n`;
+  mensaje += `📞 Teléfono: ${pedido.cliente_telefono || ''}\n`;
+  if (pedido.tipo === 'domicilio') {
+    mensaje += `📍 Dirección: ${pedido.cliente_direccion || '(pendiente de confirmar)'}${pedido.cliente_colonia ? ', ' + pedido.cliente_colonia : ''}\n`;
+  }
+  mensaje += `🧾 Tipo de pedido: ${tipoLabel}\n`;
+  mensaje += `\nProductos:\n${itemsTexto}\n`;
+  mensaje += `\nSubtotal productos: $${subtotal.toFixed(2)}`;
   if (envio > 0) {
     mensaje += `\n🛵 Costo de envío: $${envio.toFixed(2)}`;
   }
   mensaje += `\nTotal: $${Number(pedido.total).toFixed(2)}`;
 
-  if (pedido.tipo === 'domicilio') {
-    if (pedido.cliente_direccion) {
-      mensaje += `\n\n📍 Dirección: ${pedido.cliente_direccion}${pedido.cliente_colonia ? ', ' + pedido.cliente_colonia : ''}\n¿Es correcta?`;
-    } else {
-      mensaje += `\n\n¿Nos confirmas tu dirección completa para el envío?`;
-    }
+  if (pedido.tipo === 'domicilio' && !pedido.cliente_direccion) {
+    mensaje += `\n\n¿Nos confirmas tu dirección completa para el envío?`;
   } else {
     mensaje += `\n\n¿Todo correcto?`;
   }
