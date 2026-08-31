@@ -1110,6 +1110,16 @@ app.patch('/api/pedidos/:id/estado', async (req, res) => {
     [estado, id]
   );
   const pedido = rows[0];
+
+  // Cuando el pedido queda entregado, se marca cada producto activo como entregado
+  // también — así, si después se agrega algo más, sabemos distinguir "lo viejo" de "lo nuevo".
+  if (pedido && estado === 'entregado') {
+    await pool.query(
+      `UPDATE pedido_items SET estado = 'entregado' WHERE pedido_id = $1 AND cancelado = false`,
+      [id]
+    );
+  }
+
   if (pedido) {
     io.to(`sucursal_${pedido.sucursal_id}`).emit('pedido_actualizado', pedido);
   }
@@ -1178,9 +1188,16 @@ app.post('/api/pedidos/:id/items', async (req, res) => {
     );
     await recalcularTotalPedido(id);
 
-    const { rows: pedRows } = await pool.query('SELECT sucursal_id FROM pedidos WHERE id = $1', [id]);
+    const { rows: pedRows } = await pool.query('SELECT sucursal_id, estado FROM pedidos WHERE id = $1', [id]);
     if (pedRows[0]) {
       await ajustarInventarioPorProducto(producto_id, cantidad, pedRows[0].sucursal_id, -1, opciones_seleccionadas);
+
+      // Si el pedido ya estaba "listo" o "entregado", se reabre para que el producto
+      // nuevo vuelva a aparecer en cocina — los productos viejos quedan marcados como
+      // ya entregados y no se vuelven a mostrar en el ticket.
+      if (pedRows[0].estado === 'listo' || pedRows[0].estado === 'entregado') {
+        await pool.query(`UPDATE pedidos SET estado = 'recibido' WHERE id = $1`, [id]);
+      }
     }
 
     const pedidoCompleto = await obtenerPedidoCompleto(id);
