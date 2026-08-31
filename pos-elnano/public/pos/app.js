@@ -294,6 +294,10 @@ async function abrirOverlayEditar(pedidoId) {
   btnWhatsapp.style.display = pedido.cliente_telefono && !pedido.cancelado ? 'block' : 'none';
   btnWhatsapp.onclick = () => abrirWhatsAppCliente(pedido);
 
+  const btnFinalizar = document.getElementById('btn-finalizar-pedido');
+  btnFinalizar.style.display = !ticketState.soloLectura ? 'block' : 'none';
+  btnFinalizar.onclick = () => finalizarPedido(pedido);
+
   if (pedido.cancelado) {
     document.getElementById('btn-t-pago').style.display = 'none';
   }
@@ -2858,6 +2862,19 @@ function construirMensajeWhatsApp(pedido) {
     mensaje += `\n\n¿Todo correcto?`;
   }
   return mensaje;
+}
+
+async function finalizarPedido(pedido) {
+  const avisoPago = pedido.pagado ? '' : '\n\n⚠️ Este pedido todavía no está cobrado — ¿de verdad quieres finalizarlo sin cobrar?';
+  if (!confirm(`¿Finalizar el pedido #${pedido.numero_dia ?? pedido.id}? Ya no se podrá editar después.${avisoPago}`)) return;
+
+  await fetch(`/api/pedidos/${pedido.id}/estado`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ estado: 'entregado' }),
+  });
+
+  cerrarOverlayPedido();
 }
 
 function abrirWhatsAppCliente(pedido) {
