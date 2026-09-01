@@ -745,6 +745,29 @@ app.get('/api/kds/tiempo-promedio', async (req, res) => {
 });
 
 
+// ---------- DiDi: receptor temporal para ver el formato real antes de integrar completo ----------
+async function registrarLlamadaDidi(req, res) {
+  try {
+    await pool.query(
+      'INSERT INTO didi_webhook_logs (metodo, headers, payload) VALUES ($1,$2,$3)',
+      [req.method, JSON.stringify(req.headers), JSON.stringify(req.body || req.query || {})]
+    );
+  } catch (err) {
+    console.error('Error guardando webhook de DiDi:', err);
+  }
+  console.log('[DiDi webhook]', req.method, JSON.stringify(req.body || req.query || {}));
+  // Responde 200 con algo genérico mientras sabemos qué formato de respuesta espera DiDi
+  res.status(200).json({ code: 0, msg: 'ok' });
+}
+
+app.post('/api/didi/webhook', registrarLlamadaDidi);
+app.get('/api/didi/webhook', registrarLlamadaDidi);
+
+app.get('/api/didi/webhook-logs', async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM didi_webhook_logs ORDER BY recibido_en DESC LIMIT 50');
+  res.json(rows);
+});
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono, buscar } = req.query;
