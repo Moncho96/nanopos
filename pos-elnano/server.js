@@ -34,7 +34,7 @@ io.on('connection', (socket) => {
 // ---------- Auxiliares ----------
 async function obtenerPedidoCompleto(pedidoId) {
   const { rows } = await pool.query(
-    `SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia
+    `SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia, c.puntos AS cliente_puntos
      FROM pedidos p LEFT JOIN clientes c ON c.id = p.cliente_id
      WHERE p.id = $1`,
     [pedidoId]
@@ -107,9 +107,10 @@ async function recalcularTotalPedido(pedidoId) {
      FROM pedido_items WHERE pedido_id = $1 AND cancelado = false`,
     [pedidoId]
   );
-  const { rows: pedRows } = await pool.query('SELECT costo_envio FROM pedidos WHERE id = $1', [pedidoId]);
+  const { rows: pedRows } = await pool.query('SELECT costo_envio, descuento_lealtad FROM pedidos WHERE id = $1', [pedidoId]);
   const costoEnvio = Number(pedRows[0]?.costo_envio || 0);
-  const total = Number(sumaRows[0].suma) + costoEnvio;
+  const descuentoLealtad = Number(pedRows[0]?.descuento_lealtad || 0);
+  const total = Math.max(0, Number(sumaRows[0].suma) + costoEnvio - descuentoLealtad);
 
   // Si el pedido ya tenía pagos registrados, revisa si el nuevo total sigue cubierto
   // (por ejemplo, si se agregó un producto después de cobrar, ya no alcanza)
@@ -844,6 +845,112 @@ app.patch('/api/sucursales/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
+// ---------- Lealtad: recompensas y canjes ----------
+app.get('/api/recompensas', async (req, res) => {
+  const { todas } = req.query;
+  const { rows } = await pool.query(
+    todas === 'true'
+      ? 'SELECT * FROM recompensas_lealtad ORDER BY puntos_requeridos'
+      : 'SELECT * FROM recompensas_lealtad WHERE activo = true ORDER BY puntos_requeridos'
+  );
+  res.json(rows);
+});
+
+app.post('/api/recompensas', async (req, res) => {
+  const { nombre, puntos_requeridos, monto_descuento } = req.body;
+  if (!nombre || !puntos_requeridos || !monto_descuento) {
+    return res.status(400).json({ error: 'Faltan datos de la recompensa' });
+  }
+  const { rows } = await pool.query(
+    'INSERT INTO recompensas_lealtad (nombre, puntos_requeridos, monto_descuento) VALUES ($1,$2,$3) RETURNING *',
+    [nombre.trim(), puntos_requeridos, monto_descuento]
+  );
+  res.json(rows[0]);
+});
+
+app.patch('/api/recompensas/:id', async (req, res) => {
+  const { nombre, puntos_requeridos, monto_descuento, activo } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE recompensas_lealtad SET
+       nombre = COALESCE($1, nombre),
+       puntos_requeridos = COALESCE($2, puntos_requeridos),
+       monto_descuento = COALESCE($3, monto_descuento),
+       activo = COALESCE($4, activo)
+     WHERE id = $5 RETURNING *`,
+    [nombre, puntos_requeridos, monto_descuento, activo, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Recompensa no encontrada' });
+  res.json(rows[0]);
+});
+
+app.delete('/api/recompensas/:id', async (req, res) => {
+  await pool.query('DELETE FROM recompensas_lealtad WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+app.post('/api/pedidos/:id/canjear-recompensa', async (req, res) => {
+  const { id } = req.params;
+  const { recompensa_id } = req.body;
+
+  const { rows: pedidoRows } = await pool.query('SELECT * FROM pedidos WHERE id = $1', [id]);
+  const pedido = pedidoRows[0];
+  if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+  if (!pedido.cliente_id) return res.status(400).json({ error: 'Este pedido no tiene cliente con teléfono registrado' });
+  if (Number(pedido.descuento_lealtad) > 0) return res.status(400).json({ error: 'Este pedido ya tiene un canje aplicado' });
+
+  const { rows: recompensaRows } = await pool.query('SELECT * FROM recompensas_lealtad WHERE id = $1 AND activo = true', [recompensa_id]);
+  const recompensa = recompensaRows[0];
+  if (!recompensa) return res.status(404).json({ error: 'Recompensa no encontrada' });
+
+  const { rows: clienteRows } = await pool.query('SELECT * FROM clientes WHERE id = $1', [pedido.cliente_id]);
+  const cliente = clienteRows[0];
+  if (!cliente || cliente.puntos < recompensa.puntos_requeridos) {
+    return res.status(400).json({ error: 'El cliente no tiene suficientes puntos' });
+  }
+
+  await pool.query('UPDATE clientes SET puntos = puntos - $1 WHERE id = $2', [recompensa.puntos_requeridos, cliente.id]);
+
+  const { rows: canjeRows } = await pool.query(
+    `INSERT INTO canjes_lealtad (cliente_id, pedido_id, recompensa_id, puntos_usados, monto_descuento)
+     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [cliente.id, id, recompensa.id, recompensa.puntos_requeridos, recompensa.monto_descuento]
+  );
+  const canje = canjeRows[0];
+
+  await pool.query(
+    'UPDATE pedidos SET descuento_lealtad = $1, canje_recompensa_id = $2 WHERE id = $3',
+    [recompensa.monto_descuento, canje.id, id]
+  );
+  await recalcularTotalPedido(id);
+
+  const pedidoCompleto = await obtenerPedidoCompleto(id);
+  io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
+  res.json(pedidoCompleto);
+});
+
+app.post('/api/pedidos/:id/quitar-canje', async (req, res) => {
+  const { id } = req.params;
+  const { rows: pedidoRows } = await pool.query('SELECT * FROM pedidos WHERE id = $1', [id]);
+  const pedido = pedidoRows[0];
+  if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+  if (pedido.canje_recompensa_id) {
+    const { rows: canjeRows } = await pool.query('SELECT * FROM canjes_lealtad WHERE id = $1', [pedido.canje_recompensa_id]);
+    const canje = canjeRows[0];
+    if (canje) {
+      await pool.query('UPDATE clientes SET puntos = puntos + $1 WHERE id = $2', [canje.puntos_usados, canje.cliente_id]);
+      await pool.query('DELETE FROM canjes_lealtad WHERE id = $1', [canje.id]);
+    }
+  }
+
+  await pool.query('UPDATE pedidos SET descuento_lealtad = 0, canje_recompensa_id = NULL WHERE id = $1', [id]);
+  await recalcularTotalPedido(id);
+
+  const pedidoCompleto = await obtenerPedidoCompleto(id);
+  io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
+  res.json(pedidoCompleto);
+});
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono, buscar } = req.query;
@@ -1138,7 +1245,7 @@ app.post('/api/pedidos', async (req, res) => {
 app.get('/api/pedidos', async (req, res) => {
   const { sucursal_id, estado, pagado, cancelado, fecha_desde, fecha_hasta, pendiente } = req.query;
   let query = `
-    SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia
+    SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia, c.puntos AS cliente_puntos
     FROM pedidos p
     LEFT JOIN clientes c ON c.id = p.cliente_id
     WHERE 1=1`;
@@ -1264,6 +1371,18 @@ app.patch('/api/pedidos/:id/cancelar', async (req, res) => {
     for (const it of itemsActivos) {
       await ajustarInventarioPorProducto(it.producto_id, it.cantidad, pedido.sucursal_id, 1, it.opciones_seleccionadas);
     }
+
+    // Si se habían otorgado puntos de lealtad por este pedido, se los quitamos al cliente
+    if (pedido.cliente_id && pedido.puntos_otorgados > 0) {
+      await pool.query('UPDATE clientes SET puntos = GREATEST(0, puntos - $1) WHERE id = $2', [pedido.puntos_otorgados, pedido.cliente_id]);
+    }
+    // Si había un canje de recompensa activo, se le regresan los puntos que gastó
+    if (pedido.cliente_id && pedido.canje_recompensa_id) {
+      const { rows: canjeRows } = await pool.query('SELECT puntos_usados FROM canjes_lealtad WHERE id = $1', [pedido.canje_recompensa_id]);
+      if (canjeRows[0]) {
+        await pool.query('UPDATE clientes SET puntos = puntos + $1 WHERE id = $2', [canjeRows[0].puntos_usados, pedido.cliente_id]);
+      }
+    }
   }
 
   await pool.query('UPDATE pedidos SET cancelado = true, cancelado_en = now() WHERE id = $1', [id]);
@@ -1386,7 +1505,23 @@ app.post('/api/pedidos/:id/pagos', async (req, res) => {
       `UPDATE pedidos SET pagado = $1, metodo_pago = $2, pagado_en = now() WHERE id = $3 RETURNING *`,
       [quedaCubierto, metodoResumen, id]
     );
-    const pedidoActualizado = pedidoActualizadoRes.rows[0];
+    let pedidoActualizado = pedidoActualizadoRes.rows[0];
+
+    // Otorga puntos de lealtad (1 punto por cada $10 de productos, sin contar envío),
+    // ajustando la diferencia si el pedido ya tenía puntos otorgados antes (para no duplicar
+    // si solo se corrige el método de pago, y para quitarlos si deja de estar cubierto).
+    if (pedidoActualizado.cliente_id) {
+      const baseParaPuntos = quedaCubierto
+        ? Math.max(0, Number(pedidoActualizado.total) - Number(pedidoActualizado.costo_envio || 0))
+        : 0;
+      const puntosNuevos = Math.floor(baseParaPuntos / 10);
+      const diferencia = puntosNuevos - Number(pedidoActualizado.puntos_otorgados || 0);
+      if (diferencia !== 0) {
+        await client.query('UPDATE clientes SET puntos = GREATEST(0, puntos + $1) WHERE id = $2', [diferencia, pedidoActualizado.cliente_id]);
+      }
+      const puntosRes = await client.query('UPDATE pedidos SET puntos_otorgados = $1 WHERE id = $2 RETURNING *', [puntosNuevos, id]);
+      pedidoActualizado = puntosRes.rows[0];
+    }
 
     await client.query('COMMIT');
 
