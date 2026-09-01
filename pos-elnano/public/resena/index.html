@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>El Nano - Tu opinión</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #f4f4f4; color: #222; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .card { background: white; border-radius: 16px; padding: 32px 24px; max-width: 420px; width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,0.08); text-align: center; }
+  .card h1 { font-size: 20px; margin: 0 0 6px; }
+  .card p.sub { color: #777; font-size: 14px; margin: 0 0 24px; }
+  .estrellas { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; }
+  .estrella { font-size: 44px; cursor: pointer; color: #ddd; transition: transform 0.1s; user-select: none; }
+  .estrella.activa { color: #f5b301; }
+  .estrella:active { transform: scale(1.15); }
+  textarea { width: 100%; min-height: 90px; padding: 12px; border-radius: 10px; border: 1px solid #ddd; font-size: 14px; font-family: inherit; resize: vertical; margin-bottom: 16px; }
+  button.enviar { width: 100%; padding: 15px; background: #b8232f; color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: bold; cursor: pointer; }
+  button.enviar:disabled { background: #ccc; }
+  .estado { text-align: center; padding: 20px; color: #666; }
+  .gracias .check { font-size: 56px; margin-bottom: 10px; }
+  .btn-google { display: inline-flex; align-items: center; gap: 8px; margin-top: 18px; padding: 14px 20px; background: #1a73e8; color: white; border-radius: 10px; text-decoration: none; font-weight: bold; font-size: 14px; }
+  #pantalla-form { display: none; }
+  #pantalla-gracias { display: none; }
+  #pantalla-cargando, #pantalla-error, #pantalla-ya { display: none; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div id="pantalla-cargando" class="estado" style="display:block">Cargando...</div>
+  <div id="pantalla-error" class="estado"></div>
+  <div id="pantalla-ya" class="estado">
+    <div style="font-size:40px">🙏</div>
+    <p>Ya nos dejaste tu reseña, ¡muchas gracias!</p>
+  </div>
+
+  <div id="pantalla-form">
+    <h1 id="titulo-form">¿Cómo estuvo tu pedido?</h1>
+    <p class="sub">Tu opinión nos ayuda a mejorar</p>
+    <div class="estrellas" id="estrellas"></div>
+    <textarea id="comentario" placeholder="Cuéntanos qué tal estuvo (opcional)"></textarea>
+    <button class="enviar" id="btn-enviar" disabled>Enviar reseña</button>
+    <div id="status-form" style="color:#b8232f;font-size:13px;margin-top:10px"></div>
+  </div>
+
+  <div id="pantalla-gracias" class="gracias">
+    <div class="check">🎉</div>
+    <h1>¡Gracias por tu opinión!</h1>
+    <p class="sub" id="mensaje-gracias"></p>
+    <a href="#" id="btn-google" class="btn-google" style="display:none" target="_blank">⭐ Compártelo también en Google</a>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
