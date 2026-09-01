@@ -528,6 +528,10 @@ async function cancelarItemEditar(itemId) {
   renderTicketPanel();
 }
 
+async function refrescarPedidoEditando() {
+  ticketState.pedidoData = await fetch(`/api/pedidos/${ticketState.pedidoId}`).then((r) => r.json());
+}
+
 // ---------- Panel del ticket (común a ambos modos) ----------
 
 function renderTicketPanel() {
@@ -584,6 +588,8 @@ function renderTicketPanel() {
     });
   }
 
+  const descuentoLealtad = ticketState.modo === 'editar' ? Number(ticketState.pedidoData.descuento_lealtad) || 0 : 0;
+
   document.getElementById('ticket-desglose').innerHTML = `
     <div style="display:flex;justify-content:space-between">
       <span>Subtotal productos</span><span>$${subtotalProductos.toFixed(2)}</span>
@@ -594,11 +600,107 @@ function renderTicketPanel() {
             <span>🛵 Costo de envío</span><span>$${envio.toFixed(2)}</span>
           </div>`
         : ''
+    }
+    ${
+      descuentoLealtad > 0
+        ? `<div style="display:flex;justify-content:space-between;color:#a97800">
+            <span>🎁 Descuento por puntos</span><span>−$${descuentoLealtad.toFixed(2)}</span>
+          </div>`
+        : ''
     }`;
   document.getElementById('ticket-total').textContent = `$${total.toFixed(2)}`;
+  actualizarZonaLealtad();
 }
 
-// ---------- Botones Aceptar / Pago ----------
+// ---------- Lealtad: mostrar puntos y canjear ----------
+
+let recompensasDisponiblesCache = null;
+
+function actualizarZonaLealtad() {
+  const cont = document.getElementById('ticket-lealtad-info');
+  const btnCanjear = document.getElementById('btn-canjear-lealtad');
+  const btnQuitar = document.getElementById('btn-quitar-canje');
+
+  if (ticketState.modo !== 'editar' || !ticketState.pedidoData.cliente_id || ticketState.soloLectura) {
+    cont.style.display = 'none';
+    return;
+  }
+
+  const pedido = ticketState.pedidoData;
+  const puntos = Number(pedido.cliente_puntos) || 0;
+  const tieneCanje = Number(pedido.descuento_lealtad) > 0;
+
+  cont.style.display = 'block';
+  document.getElementById('ticket-lealtad-texto').innerHTML = tieneCanje
+    ? `🎁 Este pedido ya tiene un canje aplicado (−$${Number(pedido.descuento_lealtad).toFixed(2)}). El cliente tiene ${puntos} punto(s) restantes.`
+    : `⭐ Este cliente tiene <strong>${puntos} punto(s)</strong> acumulados.`;
+
+  btnCanjear.style.display = tieneCanje ? 'none' : 'block';
+  btnQuitar.style.display = tieneCanje ? 'block' : 'none';
+}
+
+document.getElementById('btn-canjear-lealtad').addEventListener('click', async () => {
+  if (!recompensasDisponiblesCache) {
+    recompensasDisponiblesCache = await fetch('/api/recompensas').then((r) => r.json());
+  }
+  const puntos = Number(ticketState.pedidoData.cliente_puntos) || 0;
+  const disponibles = recompensasDisponiblesCache.filter((r) => r.puntos_requeridos <= puntos);
+
+  if (!disponibles.length) {
+    alert('El cliente no tiene puntos suficientes para ninguna recompensa todavía.');
+    return;
+  }
+
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-canje">
+      <div class="modal-box">
+        <h3>Canjear puntos</h3>
+        <div style="font-size:13px;color:#888;margin-bottom:10px">El cliente tiene ${puntos} punto(s)</div>
+        ${disponibles
+          .map(
+            (r) => `
+          <div class="modal-opcion" data-id="${r.id}">
+            <span>${r.nombre}</span>
+            <span class="precio">${r.puntos_requeridos} pts · −$${Number(r.monto_descuento).toFixed(2)}</span>
+          </div>`
+          )
+          .join('')}
+        <button class="btn-cancelar-modal" id="btn-cerrar-canje">Cancelar</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  document.getElementById('modal-overlay-canje').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-canje') document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-cerrar-canje').addEventListener('click', () => {
+    document.getElementById('modal-container').innerHTML = '';
+  });
+  document.querySelectorAll('#modal-overlay-canje .modal-opcion').forEach((el) => {
+    el.addEventListener('click', async () => {
+      const resp = await fetch(`/api/pedidos/${ticketState.pedidoId}/canjear-recompensa`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recompensa_id: el.dataset.id }),
+      });
+      document.getElementById('modal-container').innerHTML = '';
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert(err.error || 'No se pudo canjear');
+        return;
+      }
+      await refrescarPedidoEditando();
+      renderTicketPanel();
+    });
+  });
+});
+
+document.getElementById('btn-quitar-canje').addEventListener('click', async () => {
+  if (!confirm('¿Quitar el canje aplicado a este pedido? Se le regresan los puntos al cliente.')) return;
+  await fetch(`/api/pedidos/${ticketState.pedidoId}/quitar-canje`, { method: 'POST' });
+  await refrescarPedidoEditando();
+  renderTicketPanel();
+});
 
 document.getElementById('btn-t-aceptar').addEventListener('click', async () => {
   const pedido = await crearPedidoDesdeTicket();
@@ -986,6 +1088,13 @@ document.getElementById('btn-abrir-compra-registro').addEventListener('click', (
 });
 document.getElementById('btn-cerrar-compra-registro').addEventListener('click', () => document.getElementById('overlay-compra-registro').classList.remove('abierto'));
 
+document.getElementById('btn-abrir-lealtad').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-lealtad').classList.add('abierto');
+  cargarRecompensasAdmin();
+});
+document.getElementById('btn-cerrar-lealtad').addEventListener('click', () => document.getElementById('overlay-lealtad').classList.remove('abierto'));
+
 document.getElementById('btn-abrir-resenas').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-resenas').classList.add('abierto');
@@ -1291,6 +1400,93 @@ async function agregarEnvio() {
 
 cargarInicial();
 
+// ==================== LEALTAD: RECOMPENSAS ====================
+
+document.querySelectorAll('#nueva-recompensa-puntos, #nueva-recompensa-monto').forEach((el) => {
+  el.addEventListener('input', () => {
+    el.value = el.value.replace(/[^0-9.]/g, '');
+  });
+});
+
+document.getElementById('btn-agregar-recompensa').addEventListener('click', async () => {
+  const nombre = document.getElementById('nueva-recompensa-nombre').value.trim();
+  const puntos_requeridos = document.getElementById('nueva-recompensa-puntos').value;
+  const monto_descuento = document.getElementById('nueva-recompensa-monto').value;
+  if (!nombre || !puntos_requeridos || !monto_descuento) {
+    alert('Falta el nombre, los puntos o el monto de descuento');
+    return;
+  }
+  await fetch('/api/recompensas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, puntos_requeridos, monto_descuento }),
+  });
+  document.getElementById('nueva-recompensa-nombre').value = '';
+  document.getElementById('nueva-recompensa-puntos').value = '';
+  document.getElementById('nueva-recompensa-monto').value = '';
+  cargarRecompensasAdmin();
+});
+
+async function cargarRecompensasAdmin() {
+  const recompensas = await fetch('/api/recompensas?todas=true').then((r) => r.json());
+  recompensasDisponiblesCache = null; // invalida el caché usado en el ticket, para que tome cambios nuevos
+
+  document.getElementById('recompensas-tabla-body').innerHTML =
+    recompensas
+      .map(
+        (r) => `
+    <tr style="opacity:${r.activo ? '1' : '0.5'}">
+      <td><input type="text" class="recompensa-nombre-edit" data-id="${r.id}" value="${r.nombre}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td class="num"><input type="text" inputmode="decimal" class="recompensa-puntos-edit" data-id="${r.id}" value="${r.puntos_requeridos}" style="width:60px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+      <td class="num"><input type="text" inputmode="decimal" class="recompensa-monto-edit" data-id="${r.id}" value="${r.monto_descuento}" style="width:70px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+      <td style="white-space:nowrap">
+        <button class="btn-eliminar-fila" data-guardar-recompensa="${r.id}" title="Guardar">💾</button>
+        <button class="btn-eliminar-fila" data-toggle-recompensa="${r.id}" data-activo="${r.activo}" title="${r.activo ? 'Desactivar' : 'Activar'}">${r.activo ? '👁️' : '🚫'}</button>
+      </td>
+      <td><button class="btn-eliminar-fila" data-borrar-recompensa="${r.id}" title="Borrar">🗑️</button></td>
+    </tr>`
+      )
+      .join('') || '<tr><td colspan="5" style="text-align:center;color:#999">Sin recompensas todavía</td></tr>';
+
+  document.querySelectorAll('.recompensa-puntos-edit, .recompensa-monto-edit').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
+    });
+  });
+  document.querySelectorAll('[data-guardar-recompensa]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.guardarRecompensa;
+      const nombre = document.querySelector(`.recompensa-nombre-edit[data-id="${id}"]`).value.trim();
+      const puntos_requeridos = document.querySelector(`.recompensa-puntos-edit[data-id="${id}"]`).value;
+      const monto_descuento = document.querySelector(`.recompensa-monto-edit[data-id="${id}"]`).value;
+      await fetch(`/api/recompensas/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre, puntos_requeridos, monto_descuento }),
+      });
+      cargarRecompensasAdmin();
+    });
+  });
+  document.querySelectorAll('[data-toggle-recompensa]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const activo = btn.dataset.activo === 'true';
+      await fetch(`/api/recompensas/${btn.dataset.toggleRecompensa}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activo: !activo }),
+      });
+      cargarRecompensasAdmin();
+    });
+  });
+  document.querySelectorAll('[data-borrar-recompensa]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Borrar esta recompensa?')) return;
+      await fetch(`/api/recompensas/${btn.dataset.borrarRecompensa}`, { method: 'DELETE' });
+      cargarRecompensasAdmin();
+    });
+  });
+}
+
 // ==================== RESEÑAS ====================
 
 document.getElementById('btn-guardar-google-url').addEventListener('click', async () => {
@@ -1368,13 +1564,14 @@ function renderClientes(clientes) {
       <td><input type="text" class="cliente-telefono-edit" data-id="${c.id}" value="${c.telefono || ''}" style="width:110px;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
       <td><input type="text" class="cliente-direccion-edit" data-id="${c.id}" value="${c.direccion || ''}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
       <td><input type="text" class="cliente-colonia-edit" data-id="${c.id}" value="${c.colonia || ''}" style="width:100px;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td class="num" style="font-weight:bold;color:#a97800">⭐ ${c.puntos || 0}</td>
       <td style="white-space:nowrap">
         <button class="btn-eliminar-fila" data-guardar-cliente="${c.id}" title="Guardar">💾</button>
         <button class="btn-eliminar-fila" data-borrar-cliente="${c.id}" title="Borrar">🗑️</button>
       </td>
     </tr>`
       )
-      .join('') || '<tr><td colspan="5" style="text-align:center;color:#999">Sin clientes encontrados</td></tr>';
+      .join('') || '<tr><td colspan="6" style="text-align:center;color:#999">Sin clientes encontrados</td></tr>';
 
   document.querySelectorAll('[data-guardar-cliente]').forEach((btn) => {
     btn.addEventListener('click', () => guardarClienteAdmin(Number(btn.dataset.guardarCliente)));

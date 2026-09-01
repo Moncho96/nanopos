@@ -243,6 +243,11 @@
         </select>
         <div id="ticket-direccion-display" style="display:none;font-size:13px;color:#555;background:#f4f4f4;border-radius:8px;padding:8px 10px;margin-top:8px">📍</div>
         <div id="ticket-envio-info" style="font-size:12px;color:#1a7d3a;font-weight:600;display:none;margin-top:4px"></div>
+        <div id="ticket-lealtad-info" style="display:none;font-size:12px;background:#fff8e1;color:#a97800;border-radius:8px;padding:8px 10px;margin-top:8px">
+          <div id="ticket-lealtad-texto"></div>
+          <button id="btn-canjear-lealtad" style="display:none;width:100%;margin-top:6px;padding:8px;border-radius:6px;border:1px solid #f5b301;background:white;color:#a97800;font-size:12px;font-weight:600;cursor:pointer">🎁 Canjear puntos</button>
+          <button id="btn-quitar-canje" style="display:none;width:100%;margin-top:6px;padding:8px;border-radius:6px;border:1px solid #b8232f;background:white;color:#b8232f;font-size:12px;font-weight:600;cursor:pointer">Quitar canje aplicado</button>
+        </div>
         <div id="ticket-cancelado-banner" style="display:none;margin-top:8px;padding:8px;background:#f8d7da;color:#b8232f;border-radius:8px;font-size:13px;font-weight:600;text-align:center">❌ Este pedido fue cancelado</div>
         <div id="ticket-acciones-extra" style="display:none;gap:8px;margin-top:8px">
           <button id="btn-whatsapp-ticket" style="display:none;flex:1;padding:9px;border-radius:8px;border:none;background:#25D366;color:white;font-size:12.5px;font-weight:600;cursor:pointer">📱 WhatsApp</button>
@@ -275,6 +280,7 @@
     <button class="item" id="btn-abrir-importar">📥 Importar historial</button>
     <button class="item" id="btn-abrir-conteo">📦 Conteo de inventario</button>
     <button class="item" id="btn-abrir-compras">🛒 Planeación de compras</button>
+    <button class="item" id="btn-abrir-lealtad">🎁 Lealtad</button>
     <button class="item" id="btn-abrir-resenas">⭐ Reseñas</button>
     <button class="item" id="btn-abrir-clientes">👥 Clientes</button>
     <button class="item" id="btn-abrir-reparto">🤝 Reparto de utilidades</button>
@@ -333,6 +339,27 @@
   <div id="historial-compras" style="padding:0 12px 24px"></div>
 </div>
 
+<!-- Lealtad -->
+<div class="full-overlay" id="overlay-lealtad">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-lealtad">✕</button>
+    <span class="titulo">Lealtad</span>
+  </div>
+  <div style="padding:12px;font-size:13px;color:#666">Por cada $10 de compra (sin contar envío), el cliente gana 1 punto. Define aquí qué se puede canjear con esos puntos.</div>
+
+  <div class="form-inline">
+    <input type="text" id="nueva-recompensa-nombre" placeholder="Nombre (ej. Descuento de $50)" style="flex:1" />
+    <input type="text" inputmode="decimal" id="nueva-recompensa-puntos" placeholder="Puntos" style="width:80px" />
+    <input type="text" inputmode="decimal" id="nueva-recompensa-monto" placeholder="Descuento $" style="width:90px" />
+    <button id="btn-agregar-recompensa">+ Agregar</button>
+  </div>
+
+  <table class="tabla-simple">
+    <thead><tr><th>Recompensa</th><th class="num">Puntos</th><th class="num">Descuento</th><th></th><th></th></tr></thead>
+    <tbody id="recompensas-tabla-body"></tbody>
+  </table>
+</div>
+
 <!-- Reseñas -->
 <div class="full-overlay" id="overlay-resenas">
   <div class="full-overlay-header">
@@ -360,7 +387,7 @@
     <input type="text" id="clientes-buscar" placeholder="Buscar por nombre, teléfono o colonia..." style="flex:1" />
   </div>
   <table class="tabla-simple">
-    <thead><tr><th>Nombre</th><th>Teléfono</th><th>Dirección</th><th>Colonia</th><th></th></tr></thead>
+    <thead><tr><th>Nombre</th><th>Teléfono</th><th>Dirección</th><th>Colonia</th><th class="num">Puntos</th><th></th></tr></thead>
     <tbody id="clientes-tabla-body"></tbody>
   </table>
 </div>
