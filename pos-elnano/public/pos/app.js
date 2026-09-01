@@ -294,6 +294,10 @@ async function abrirOverlayEditar(pedidoId) {
   btnWhatsapp.style.display = pedido.cliente_telefono && !pedido.cancelado ? 'block' : 'none';
   btnWhatsapp.onclick = () => abrirWhatsAppCliente(pedido);
 
+  const btnPedirResena = document.getElementById('btn-pedir-resena');
+  btnPedirResena.style.display = pedido.cliente_telefono && pedido.pagado && !pedido.cancelado ? 'block' : 'none';
+  btnPedirResena.onclick = () => pedirResena(pedido);
+
   const btnFinalizar = document.getElementById('btn-finalizar-pedido');
   btnFinalizar.style.display = !ticketState.soloLectura ? 'block' : 'none';
   btnFinalizar.onclick = () => finalizarPedido(pedido);
@@ -982,6 +986,13 @@ document.getElementById('btn-abrir-compra-registro').addEventListener('click', (
 });
 document.getElementById('btn-cerrar-compra-registro').addEventListener('click', () => document.getElementById('overlay-compra-registro').classList.remove('abierto'));
 
+document.getElementById('btn-abrir-resenas').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-resenas').classList.add('abierto');
+  cargarResenas();
+});
+document.getElementById('btn-cerrar-resenas').addEventListener('click', () => document.getElementById('overlay-resenas').classList.remove('abierto'));
+
 document.getElementById('btn-abrir-clientes').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-clientes').classList.add('abierto');
@@ -1279,6 +1290,58 @@ async function agregarEnvio() {
 }
 
 cargarInicial();
+
+// ==================== RESEÑAS ====================
+
+document.getElementById('btn-guardar-google-url').addEventListener('click', async () => {
+  const sucursal_id = document.getElementById('sucursal-select').value;
+  const google_maps_url = document.getElementById('resena-google-url').value.trim();
+  if (!google_maps_url) {
+    alert('Pega el link de Google Maps primero');
+    return;
+  }
+  await fetch(`/api/sucursales/${sucursal_id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ google_maps_url }),
+  });
+  alert('Guardado');
+});
+
+async function cargarResenas() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+
+  const sucursalActual = state.sucursales.find((s) => String(s.id) === String(sucursalId));
+  document.getElementById('resena-google-url').value = sucursalActual?.google_maps_url || '';
+
+  const resenas = await fetch(`/api/resenas?sucursal_id=${sucursalId}`).then((r) => r.json());
+
+  const resumenEl = document.getElementById('resenas-resumen');
+  if (!resenas.length) {
+    resumenEl.innerHTML = '<p style="color:#999;font-size:13px">Sin reseñas todavía</p>';
+  } else {
+    const promedio = resenas.reduce((s, r) => s + r.calificacion, 0) / resenas.length;
+    resumenEl.innerHTML = `
+      <div class="resumen-total">
+        <span>Promedio (${resenas.length} reseña${resenas.length === 1 ? '' : 's'})</span>
+        <span>${'⭐'.repeat(Math.round(promedio))} ${promedio.toFixed(1)}</span>
+      </div>`;
+  }
+
+  document.getElementById('resenas-lista').innerHTML =
+    resenas
+      .map(
+        (r) => `
+      <div style="background:white;border-radius:10px;padding:12px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;font-size:13px;color:#888;margin-bottom:6px">
+          <span>${'⭐'.repeat(r.calificacion)}${'☆'.repeat(5 - r.calificacion)} ${r.cliente_nombre ? '· ' + escapeHtml(r.cliente_nombre) : ''}</span>
+          <span>${new Date(r.creado_en).toLocaleDateString('es-MX')}</span>
+        </div>
+        ${r.comentario ? `<div style="font-size:14px">${escapeHtml(r.comentario)}</div>` : '<div style="font-size:13px;color:#bbb">Sin comentario</div>'}
+      </div>`
+      )
+      .join('') || '';
+}
 
 // ==================== CATÁLOGO DE CLIENTES ====================
 
@@ -2875,6 +2938,25 @@ async function finalizarPedido(pedido) {
   });
 
   cerrarOverlayPedido();
+}
+
+async function pedirResena(pedido) {
+  const boton = document.getElementById('btn-pedir-resena');
+  boton.disabled = true;
+  try {
+    const { token } = await fetch(`/api/pedidos/${pedido.id}/generar-link-resena`, { method: 'POST' }).then((r) => r.json());
+    const url = `${window.location.origin}/resena?token=${token}`;
+
+    let numero = (pedido.cliente_telefono || '').replace(/\D/g, '');
+    if (numero.length === 10) numero = '52' + numero;
+
+    const mensaje = `¡Hola ${pedido.cliente_nombre || ''}! Gracias por tu pedido #${pedido.numero_dia ?? pedido.id} en El Nano 🌮 ¿Nos regalas 30 segundos para contarnos qué tal estuvo?\n\n${url}`;
+    window.open(`https://wa.me/${numero}?text=${encodeURIComponent(mensaje)}`, '_blank');
+  } catch (err) {
+    alert('No se pudo generar el link de reseña, intenta de nuevo.');
+  } finally {
+    boton.disabled = false;
+  }
 }
 
 function abrirWhatsAppCliente(pedido) {

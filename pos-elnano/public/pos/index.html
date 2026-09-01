@@ -246,6 +246,7 @@
         <div id="ticket-cancelado-banner" style="display:none;margin-top:8px;padding:8px;background:#f8d7da;color:#b8232f;border-radius:8px;font-size:13px;font-weight:600;text-align:center">❌ Este pedido fue cancelado</div>
         <div id="ticket-acciones-extra" style="display:none;gap:8px;margin-top:8px">
           <button id="btn-whatsapp-ticket" style="display:none;flex:1;padding:9px;border-radius:8px;border:none;background:#25D366;color:white;font-size:12.5px;font-weight:600;cursor:pointer">📱 WhatsApp</button>
+          <button id="btn-pedir-resena" style="display:none;flex:1;padding:9px;border-radius:8px;border:1px solid #f5b301;background:white;color:#a97800;font-size:12.5px;font-weight:600;cursor:pointer">⭐ Pedir reseña</button>
           <button id="btn-cambiar-metodo" style="display:none;flex:1;padding:9px;border-radius:8px;border:1px solid #0056b3;background:white;color:#0056b3;font-size:12.5px;font-weight:600;cursor:pointer">💳 Cambiar método de pago</button>
           <button id="btn-cancelar-pedido-completo" style="display:none;flex:1;padding:9px;border-radius:8px;border:1px solid #b8232f;background:white;color:#b8232f;font-size:12.5px;font-weight:600;cursor:pointer">🗑️ Cancelar pedido</button>
         </div>
@@ -274,6 +275,7 @@
     <button class="item" id="btn-abrir-importar">📥 Importar historial</button>
     <button class="item" id="btn-abrir-conteo">📦 Conteo de inventario</button>
     <button class="item" id="btn-abrir-compras">🛒 Planeación de compras</button>
+    <button class="item" id="btn-abrir-resenas">⭐ Reseñas</button>
     <button class="item" id="btn-abrir-clientes">👥 Clientes</button>
     <button class="item" id="btn-abrir-reparto">🤝 Reparto de utilidades</button>
     <button class="item" id="btn-abrir-importar-recetas">📋 Importar recetas</button>
@@ -329,6 +331,23 @@
 
   <h3 style="padding:0 12px">Compras anteriores</h3>
   <div id="historial-compras" style="padding:0 12px 24px"></div>
+</div>
+
+<!-- Reseñas -->
+<div class="full-overlay" id="overlay-resenas">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-resenas">✕</button>
+    <span class="titulo">Reseñas</span>
+  </div>
+
+  <div class="form-inline">
+    <input type="text" id="resena-google-url" placeholder="Link para dejar reseña en Google Maps de esta sucursal" style="flex:1" />
+    <button id="btn-guardar-google-url">Guardar</button>
+  </div>
+
+  <div id="resenas-resumen" style="padding:0 12px 12px"></div>
+
+  <div id="resenas-lista" style="padding:0 12px 24px"></div>
 </div>
 
 <!-- Catálogo de clientes -->
