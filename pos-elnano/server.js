@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const crypto = require('crypto');
 const cors = require('cors');
 const { Server } = require('socket.io');
 const { Pool } = require('pg');
@@ -15,6 +16,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/pos', express.static(path.join(__dirname, 'public/pos')));
 app.use('/kds', express.static(path.join(__dirname, 'public/kds')));
 app.use('/pedir', express.static(path.join(__dirname, 'public/pedir')));
+app.use('/resena', express.static(path.join(__dirname, 'public/resena')));
 app.get('/', (req, res) => res.redirect('/pos'));
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -766,6 +768,80 @@ app.get('/api/didi/webhook', registrarLlamadaDidi);
 app.get('/api/didi/webhook-logs', async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM didi_webhook_logs ORDER BY recibido_en DESC LIMIT 50');
   res.json(rows);
+});
+
+// ---------- Reseñas ----------
+app.post('/api/pedidos/:id/generar-link-resena', async (req, res) => {
+  const { rows } = await pool.query('SELECT resena_token FROM pedidos WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
+
+  let token = rows[0].resena_token;
+  if (!token) {
+    token = crypto.randomBytes(12).toString('hex');
+    await pool.query('UPDATE pedidos SET resena_token = $1 WHERE id = $2', [token, req.params.id]);
+  }
+  res.json({ token });
+});
+
+// Público: datos básicos del pedido para mostrar la encuesta (sin exponer nada sensible)
+app.get('/api/resenas/pedido/:token', async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT p.id, p.numero_dia, p.cliente_nombre, p.sucursal_id, s.nombre AS sucursal_nombre,
+            s.google_maps_url,
+            EXISTS(SELECT 1 FROM resenas WHERE pedido_id = p.id) AS ya_reseno
+     FROM pedidos p JOIN sucursales s ON s.id = p.sucursal_id
+     WHERE p.resena_token = $1`,
+    [req.params.token]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Este link no es válido' });
+  res.json(rows[0]);
+});
+
+// Público: registrar la reseña
+app.post('/api/resenas', async (req, res) => {
+  const { token, calificacion, comentario } = req.body;
+  if (!token || !calificacion) return res.status(400).json({ error: 'Faltan datos' });
+  if (calificacion < 1 || calificacion > 5) return res.status(400).json({ error: 'Calificación inválida' });
+
+  const { rows: pedidoRows } = await pool.query('SELECT id, sucursal_id FROM pedidos WHERE resena_token = $1', [token]);
+  if (!pedidoRows.length) return res.status(404).json({ error: 'Este link no es válido' });
+  const pedido = pedidoRows[0];
+
+  const { rows: existente } = await pool.query('SELECT id FROM resenas WHERE pedido_id = $1', [pedido.id]);
+  if (existente.length) return res.status(400).json({ error: 'Ya se registró una reseña para este pedido' });
+
+  const { rows } = await pool.query(
+    'INSERT INTO resenas (pedido_id, sucursal_id, calificacion, comentario) VALUES ($1,$2,$3,$4) RETURNING *',
+    [pedido.id, pedido.sucursal_id, calificacion, comentario || null]
+  );
+  res.json(rows[0]);
+});
+
+// Interno: listado para el panel de administración
+app.get('/api/resenas', async (req, res) => {
+  const { sucursal_id } = req.query;
+  let query = `
+    SELECT r.*, p.numero_dia, p.cliente_nombre
+    FROM resenas r LEFT JOIN pedidos p ON p.id = r.pedido_id
+    WHERE 1=1`;
+  const params = [];
+  if (sucursal_id) {
+    params.push(sucursal_id);
+    query += ` AND r.sucursal_id = $${params.length}`;
+  }
+  query += ' ORDER BY r.creado_en DESC LIMIT 200';
+  const { rows } = await pool.query(query, params);
+  res.json(rows);
+});
+
+app.patch('/api/sucursales/:id', async (req, res) => {
+  const { google_maps_url } = req.body;
+  const { rows } = await pool.query(
+    'UPDATE sucursales SET google_maps_url = COALESCE($1, google_maps_url) WHERE id = $2 RETURNING *',
+    [google_maps_url, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Sucursal no encontrada' });
+  res.json(rows[0]);
 });
 
 // ---------- Clientes ----------
