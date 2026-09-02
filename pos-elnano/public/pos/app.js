@@ -77,6 +77,14 @@ async function cargarInicial() {
   }
   if (sucursalElegida) select.value = sucursalElegida.id;
 
+  // Si el empleado tiene una sola sucursal asignada, se ignora cualquier otra elección
+  // y se bloquea el selector para que no pueda cambiarse a la otra sucursal.
+  if (state.empleado?.sucursal_id) {
+    select.value = state.empleado.sucursal_id;
+    select.disabled = true;
+    select.title = 'Tu acceso está limitado a esta sucursal';
+  }
+
   localStorage.setItem('elnano_sucursal_id', select.value);
 
   select.addEventListener('change', async () => {
@@ -1468,6 +1476,8 @@ document.getElementById('nuevo-empleado-pin').addEventListener('input', (e) => {
 document.getElementById('btn-abrir-empleados').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-empleados').classList.add('abierto');
+  document.getElementById('nuevo-empleado-sucursal').innerHTML =
+    '<option value="">Todas (encargado)</option>' + state.sucursales.map((s) => `<option value="${s.id}">${s.nombre}</option>`).join('');
   cargarEmpleados();
 });
 document.getElementById('btn-cerrar-empleados').addEventListener('click', () => document.getElementById('overlay-empleados').classList.remove('abierto'));
@@ -1476,6 +1486,7 @@ document.getElementById('btn-agregar-empleado').addEventListener('click', async 
   const nombre = document.getElementById('nuevo-empleado-nombre').value.trim();
   const puesto = document.getElementById('nuevo-empleado-puesto').value;
   const pin = document.getElementById('nuevo-empleado-pin').value;
+  const sucursal_id = document.getElementById('nuevo-empleado-sucursal').value || null;
   if (!nombre || pin.length !== 4) {
     alert('Falta el nombre o el PIN debe ser de 4 dígitos');
     return;
@@ -1483,7 +1494,7 @@ document.getElementById('btn-agregar-empleado').addEventListener('click', async 
   const resp = await fetch('/api/empleados', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nombre, puesto, pin }),
+    body: JSON.stringify({ nombre, puesto, pin, sucursal_id }),
   });
   if (!resp.ok) {
     const err = await resp.json();
@@ -1509,6 +1520,12 @@ async function cargarEmpleados() {
           <option value="encargado" ${e.puesto === 'encargado' ? 'selected' : ''}>Encargado</option>
         </select>
       </td>
+      <td>
+        <select class="empleado-sucursal-edit" data-id="${e.id}" style="padding:6px;border-radius:6px;border:1px solid #ddd">
+          <option value="">Todas</option>
+          ${state.sucursales.map((s) => `<option value="${s.id}" ${String(e.sucursal_id) === String(s.id) ? 'selected' : ''}>${s.nombre}</option>`).join('')}
+        </select>
+      </td>
       <td><input type="text" inputmode="numeric" class="empleado-pin-edit" data-id="${e.id}" value="${e.pin}" maxlength="4" style="width:60px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:center" /></td>
       <td style="white-space:nowrap">
         <button class="btn-eliminar-fila" data-guardar-empleado="${e.id}" title="Guardar">💾</button>
@@ -1517,7 +1534,7 @@ async function cargarEmpleados() {
       <td><button class="btn-eliminar-fila" data-borrar-empleado="${e.id}" title="Borrar">🗑️</button></td>
     </tr>`
     )
-    .join('') || '<tr><td colspan="5" style="text-align:center;color:#999">Sin empleados todavía — se puede usar el PIN maestro mientras tanto</td></tr>';
+    .join('') || '<tr><td colspan="6" style="text-align:center;color:#999">Sin empleados todavía — se puede usar el PIN maestro mientras tanto</td></tr>';
 
   document.querySelectorAll('.empleado-pin-edit').forEach((el) => {
     el.addEventListener('input', () => {
@@ -1530,10 +1547,11 @@ async function cargarEmpleados() {
       const nombre = document.querySelector(`.empleado-nombre-edit[data-id="${id}"]`).value.trim();
       const puesto = document.querySelector(`.empleado-puesto-edit[data-id="${id}"]`).value;
       const pin = document.querySelector(`.empleado-pin-edit[data-id="${id}"]`).value;
+      const sucursal_id = document.querySelector(`.empleado-sucursal-edit[data-id="${id}"]`).value || null;
       const resp = await fetch(`/api/empleados/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nombre, puesto, pin }),
+        body: JSON.stringify({ nombre, puesto, pin, sucursal_id }),
       });
       if (!resp.ok) {
         const err = await resp.json();
