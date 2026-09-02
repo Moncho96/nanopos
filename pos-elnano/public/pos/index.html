@@ -197,6 +197,45 @@
   .barra-fondo { flex: 1; background: #f0f0f0; border-radius: 6px; height: 22px; position: relative; overflow: hidden; }
   .barra-relleno { background: #b8232f; height: 100%; border-radius: 6px; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; }
   .barra-relleno span { color: white; font-size: 11px; font-weight: bold; white-space: nowrap; }
+
+  /* ==================== MODO OSCURO ==================== */
+  body.dark { background: #121212; color: #e4e4e4; }
+  body.dark .tipo-tabs, body.dark .filtros-estado, body.dark .resumen-toggle, body.dark .resumen-panel,
+  body.dark .pedido-row, body.dark .cat-sidebar, body.dark .prod-tile, body.dark .ticket-panel,
+  body.dark .ticket-header, body.dark .ticket-footer, body.dark .modal-box, body.dark .drawer,
+  body.dark .form-inline, body.dark .tabla-simple, body.dark .kpi-card, body.dark .informes-seccion,
+  body.dark .nuevo-pedido-menu, body.dark .nuevo-pedido-menu button {
+    background: #1e1e1e; color: #e4e4e4;
+  }
+  body.dark .overlay, body.dark .full-overlay { background: #121212; }
+  body.dark .tipo-tab { color: #999; }
+  body.dark .tipo-tab .count { background: #333; color: #ccc; }
+  body.dark .filtro { background: #2a2a2a; color: #ccc; }
+  body.dark .cat-sidebar-item { color: #aaa; border-right-color: #333; }
+  body.dark .cat-sidebar { border-right: 1px solid #333; }
+  body.dark .ticket-panel, body.dark .ticket-header, body.dark .ticket-footer { border-color: #333; }
+  body.dark .ticket-item { border-bottom-color: #333; }
+  body.dark .pedido-row-id, body.dark .pedido-row-total { color: #eee; }
+  body.dark .resumen-fila { border-bottom-color: #333; }
+  body.dark .resumen-total-linea, body.dark .resumen-toggle { border-color: #333; }
+  body.dark .tabla-simple th { background: #2a2a2a; color: #aaa; }
+  body.dark .tabla-simple th, body.dark .tabla-simple td { border-bottom-color: #333; }
+  body.dark .drawer button.item:hover, body.dark .nuevo-pedido-menu button:hover { background: #2a2a2a; }
+  body.dark .modal-grupo-titulo, body.dark .pedido-row-items, body.dark .pedido-row-hora,
+  body.dark .prod-tile .precio, body.dark .modal-opcion .precio, body.dark .barra-fila .etiqueta-barra {
+    color: #999;
+  }
+  body.dark .modal-opcion, body.dark .buscador, body.dark .form-inline input, body.dark .form-inline select,
+  body.dark input, body.dark select, body.dark textarea {
+    background: #2a2a2a; color: #eee; border-color: #444;
+  }
+  body.dark .btn-t-cancelar, body.dark .btn-cancelar, body.dark .barra-fondo { background: #2a2a2a; color: #ccc; }
+  body.dark [style*="background:white"], body.dark [style*="background: white"] {
+    background: #1e1e1e !important; color: #e4e4e4;
+  }
+  body.dark [style*="border:1px solid #ddd"], body.dark [style*="border: 1px solid #ddd"] {
+    border-color: #444 !important;
+  }
 </style>
 </head>
 <body>
@@ -206,6 +245,7 @@
   <div class="right">
     <select id="sucursal-select"></select>
     <button class="icon-btn" id="btn-ir-kds" title="Ir a Cocina">🍳</button>
+    <button class="icon-btn" id="btn-modo-oscuro" title="Cambiar modo claro/oscuro">🌙</button>
     <button class="icon-btn" id="btn-menu">☰</button>
   </div>
 </header>

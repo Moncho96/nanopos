@@ -1,4 +1,17 @@
 const TIPO_LABELS = { mesa: 'Mesa', para_llevar: 'Para llevar', domicilio: 'Domicilio' };
+
+// ==================== MODO OSCURO ====================
+function aplicarModoOscuro(activo) {
+  document.body.classList.toggle('dark', activo);
+  document.getElementById('btn-modo-oscuro').textContent = activo ? '☀️' : '🌙';
+}
+aplicarModoOscuro(localStorage.getItem('elnano_modo_oscuro') === 'true');
+document.getElementById('btn-modo-oscuro').addEventListener('click', () => {
+  const activo = !document.body.classList.contains('dark');
+  aplicarModoOscuro(activo);
+  localStorage.setItem('elnano_modo_oscuro', activo);
+});
+
 const METODO_LABELS = { efectivo: 'Efectivo', tarjeta: 'Tarjeta', transferencia: 'Transferencia', mixto: 'Dividido' };
 const CATEGORIA_EMOJI = {
   'Bistec y Gueros': '🌮',
