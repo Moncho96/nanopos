@@ -48,6 +48,9 @@ function normalizarSlug(nombre) {
 }
 
 async function cargarInicial() {
+  state.empleado = await fetch('/api/me').then((r) => (r.ok ? r.json() : null));
+  aplicarPermisosUI();
+
   state.sucursales = await fetch('/api/sucursales').then((r) => r.json());
   state.categorias = await fetch('/api/categorias').then((r) => r.json());
   state.productos = await fetch('/api/productos').then((r) => r.json());
@@ -253,6 +256,7 @@ function abrirOverlayNuevo(tipo) {
   renderProductosOverlay();
   renderTicketPanel();
   document.getElementById('overlay-pedido').classList.add('abierto');
+  ocultarBotonesRestringidosDelTicket();
 }
 
 async function abrirOverlayEditar(pedidoId) {
@@ -313,6 +317,7 @@ async function abrirOverlayEditar(pedidoId) {
   renderProductosOverlay();
   renderTicketPanel();
   document.getElementById('overlay-pedido').classList.add('abierto');
+  ocultarBotonesRestringidosDelTicket();
 }
 
 document.getElementById('btn-cancelar-pedido-completo').addEventListener('click', async () => {
@@ -639,6 +644,7 @@ function actualizarZonaLealtad() {
 
   btnCanjear.style.display = tieneCanje ? 'none' : 'block';
   btnQuitar.style.display = tieneCanje ? 'block' : 'none';
+  ocultarBotonesRestringidosDelTicket();
 }
 
 document.getElementById('btn-canjear-lealtad').addEventListener('click', async () => {
@@ -1413,6 +1419,148 @@ document.getElementById('btn-cerrar-sesion').addEventListener('click', async () 
 });
 
 cargarInicial();
+
+// ==================== PERMISOS SEGÚN PUESTO ====================
+
+const DRAWER_SOLO_ENCARGADO = [
+  'btn-abrir-compra-registro', 'btn-abrir-importar', 'btn-abrir-conteo', 'btn-abrir-compras',
+  'btn-abrir-lealtad', 'btn-abrir-resenas', 'btn-abrir-reparto', 'btn-abrir-importar-recetas',
+  'btn-abrir-menu-admin', 'btn-abrir-envios', 'btn-abrir-empleados',
+];
+const DRAWER_CAJERO_O_ENCARGADO = ['btn-abrir-corte'];
+
+function aplicarPermisosUI() {
+  const puesto = state.empleado?.puesto;
+  const drawerUsuario = document.getElementById('drawer-usuario');
+  if (state.empleado) {
+    drawerUsuario.textContent = `👤 ${state.empleado.nombre} · ${state.empleado.puesto}`;
+  }
+  if (!puesto || puesto === 'encargado') return; // el encargado ve todo
+
+  DRAWER_SOLO_ENCARGADO.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+  if (puesto === 'mesero') {
+    DRAWER_CAJERO_O_ENCARGADO.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+  }
+}
+
+// Esconde los botones del ticket que un mesero no debe usar (cobrar, cancelar, finalizar,
+// cambiar método, canjear puntos) — se llama cada vez que se abre o refresca un ticket.
+function ocultarBotonesRestringidosDelTicket() {
+  if (state.empleado?.puesto !== 'mesero') return;
+  ['btn-t-pago', 'btn-finalizar-pedido', 'btn-cancelar-pedido-completo', 'btn-cambiar-metodo', 'btn-canjear-lealtad', 'btn-quitar-canje'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+}
+
+// ==================== EMPLEADOS ====================
+
+document.getElementById('nuevo-empleado-pin').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/[^0-9]/g, '').slice(0, 4);
+});
+
+document.getElementById('btn-abrir-empleados').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-empleados').classList.add('abierto');
+  cargarEmpleados();
+});
+document.getElementById('btn-cerrar-empleados').addEventListener('click', () => document.getElementById('overlay-empleados').classList.remove('abierto'));
+
+document.getElementById('btn-agregar-empleado').addEventListener('click', async () => {
+  const nombre = document.getElementById('nuevo-empleado-nombre').value.trim();
+  const puesto = document.getElementById('nuevo-empleado-puesto').value;
+  const pin = document.getElementById('nuevo-empleado-pin').value;
+  if (!nombre || pin.length !== 4) {
+    alert('Falta el nombre o el PIN debe ser de 4 dígitos');
+    return;
+  }
+  const resp = await fetch('/api/empleados', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, puesto, pin }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json();
+    alert(err.error || 'No se pudo agregar');
+    return;
+  }
+  document.getElementById('nuevo-empleado-nombre').value = '';
+  document.getElementById('nuevo-empleado-pin').value = '';
+  cargarEmpleados();
+});
+
+async function cargarEmpleados() {
+  const empleados = await fetch('/api/empleados').then((r) => r.json());
+  document.getElementById('empleados-tabla-body').innerHTML = empleados
+    .map(
+      (e) => `
+    <tr style="opacity:${e.activo ? '1' : '0.5'}">
+      <td><input type="text" class="empleado-nombre-edit" data-id="${e.id}" value="${e.nombre}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td>
+        <select class="empleado-puesto-edit" data-id="${e.id}" style="padding:6px;border-radius:6px;border:1px solid #ddd">
+          <option value="mesero" ${e.puesto === 'mesero' ? 'selected' : ''}>Mesero</option>
+          <option value="cajero" ${e.puesto === 'cajero' ? 'selected' : ''}>Cajero</option>
+          <option value="encargado" ${e.puesto === 'encargado' ? 'selected' : ''}>Encargado</option>
+        </select>
+      </td>
+      <td><input type="text" inputmode="numeric" class="empleado-pin-edit" data-id="${e.id}" value="${e.pin}" maxlength="4" style="width:60px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:center" /></td>
+      <td style="white-space:nowrap">
+        <button class="btn-eliminar-fila" data-guardar-empleado="${e.id}" title="Guardar">💾</button>
+        <button class="btn-eliminar-fila" data-toggle-empleado="${e.id}" data-activo="${e.activo}" title="${e.activo ? 'Desactivar' : 'Activar'}">${e.activo ? '👁️' : '🚫'}</button>
+      </td>
+      <td><button class="btn-eliminar-fila" data-borrar-empleado="${e.id}" title="Borrar">🗑️</button></td>
+    </tr>`
+    )
+    .join('') || '<tr><td colspan="5" style="text-align:center;color:#999">Sin empleados todavía — se puede usar el PIN maestro mientras tanto</td></tr>';
+
+  document.querySelectorAll('.empleado-pin-edit').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9]/g, '').slice(0, 4);
+    });
+  });
+  document.querySelectorAll('[data-guardar-empleado]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.guardarEmpleado;
+      const nombre = document.querySelector(`.empleado-nombre-edit[data-id="${id}"]`).value.trim();
+      const puesto = document.querySelector(`.empleado-puesto-edit[data-id="${id}"]`).value;
+      const pin = document.querySelector(`.empleado-pin-edit[data-id="${id}"]`).value;
+      const resp = await fetch(`/api/empleados/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre, puesto, pin }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert(err.error || 'No se pudo guardar');
+      }
+      cargarEmpleados();
+    });
+  });
+  document.querySelectorAll('[data-toggle-empleado]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const activo = btn.dataset.activo === 'true';
+      await fetch(`/api/empleados/${btn.dataset.toggleEmpleado}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activo: !activo }),
+      });
+      cargarEmpleados();
+    });
+  });
+  document.querySelectorAll('[data-borrar-empleado]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Borrar este empleado? Ya no va a poder entrar con su PIN.')) return;
+      await fetch(`/api/empleados/${btn.dataset.borrarEmpleado}`, { method: 'DELETE' });
+      cargarEmpleados();
+    });
+  });
+}
 
 // ==================== LEALTAD: RECOMPENSAS ====================
 
