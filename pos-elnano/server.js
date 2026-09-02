@@ -1266,10 +1266,10 @@ app.get('/api/pedidos', async (req, res) => {
     params.push(cancelado === 'true');
     query += ` AND p.cancelado = $${params.length}`;
   }
-  // "Pendiente" = todavía necesita atención: le falta cobrarse O le falta entregarse
-  // (así un pedido ya pagado pero que sigue en cocina se queda visible y editable)
+  // "Pendiente" = sigue abierto: no cancelado y no finalizado todavía (sin importar
+  // si la comida ya salió de cocina — eso no cierra el pedido por sí solo)
   if (pendiente === 'true') {
-    query += ` AND p.cancelado = false AND (p.pagado = false OR p.estado != 'entregado')`;
+    query += ` AND p.cancelado = false AND p.finalizado = false`;
   }
   if (fecha_desde) {
     params.push(fecha_desde);
@@ -1329,6 +1329,22 @@ app.patch('/api/pedidos/:id/estado', async (req, res) => {
   if (pedido) {
     io.to(`sucursal_${pedido.sucursal_id}`).emit('pedido_actualizado', pedido);
   }
+  res.json(pedido);
+});
+
+// Finaliza/cierra el pedido de verdad (ya no se puede editar ni cobrar de nuevo).
+// Es independiente del estado de cocina: un pedido puede seguir abierto en mesa
+// aunque la comida ya haya salido de cocina.
+app.patch('/api/pedidos/:id/finalizar', async (req, res) => {
+  const { id } = req.params;
+  await pool.query(`UPDATE pedido_items SET estado = 'entregado' WHERE pedido_id = $1 AND cancelado = false`, [id]);
+  const { rows } = await pool.query(
+    `UPDATE pedidos SET finalizado = true, finalizado_en = now(), estado = 'entregado', actualizado_en = now() WHERE id = $1 RETURNING *`,
+    [id]
+  );
+  const pedido = rows[0];
+  if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+  io.to(`sucursal_${pedido.sucursal_id}`).emit('pedido_actualizado', pedido);
   res.json(pedido);
 });
 
@@ -1398,6 +1414,9 @@ app.post('/api/pedidos/:id/items', async (req, res) => {
   if (!producto_id || !cantidad || !precio_unitario) {
     return res.status(400).json({ error: 'Faltan datos del producto' });
   }
+  const { rows: checkRows } = await pool.query('SELECT finalizado FROM pedidos WHERE id = $1', [id]);
+  if (!checkRows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
+  if (checkRows[0].finalizado) return res.status(400).json({ error: 'Este pedido ya fue finalizado, no se puede modificar' });
   try {
     await pool.query(
       `INSERT INTO pedido_items (pedido_id, producto_id, cantidad, precio_unitario, notas, opciones_seleccionadas)
