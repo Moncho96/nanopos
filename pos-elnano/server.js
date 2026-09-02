@@ -12,9 +12,85 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// ---------- Seguridad: contraseña compartida del personal ----------
+// Protege /pos, /kds y casi todos los endpoints administrativos. Las páginas para
+// CLIENTES (/pedir, /resena) y sus llamadas necesarias se dejan siempre públicas.
+const SESSION_SECRET = process.env.SESSION_SECRET || 'cambia-esto-en-railway-por-algo-largo-y-aleatorio';
+const POS_PASSWORD = process.env.POS_PASSWORD; // configúrala en Variables de Railway
+
+function tokenSesionValido() {
+  return crypto.createHmac('sha256', SESSION_SECRET).update('pos-sesion-ok').digest('hex');
+}
+
+function obtenerCookie(req, nombre) {
+  const cabecera = req.headers.cookie;
+  if (!cabecera) return null;
+  const partes = cabecera.split(';').map((c) => c.trim());
+  const encontrada = partes.find((c) => c.startsWith(nombre + '='));
+  return encontrada ? decodeURIComponent(encontrada.split('=').slice(1).join('=')) : null;
+}
+
+function estaAutenticado(req) {
+  if (!POS_PASSWORD) return true; // si no se configuró contraseña todavía, no bloquea (para no dejarte fuera sin querer)
+  return obtenerCookie(req, 'pos_session') === tokenSesionValido();
+}
+
+function requiereLogin(req, res, next) {
+  if (estaAutenticado(req)) return next();
+  if (req.path.startsWith('/api/')) {
+    return res.status(401).json({ error: 'No autorizado, inicia sesión' });
+  }
+  res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
+}
+
+app.use('/login', express.static(path.join(__dirname, 'public/login')));
+
+app.post('/api/login', (req, res) => {
+  const { password } = req.body;
+  if (!POS_PASSWORD) {
+    return res.status(400).json({ error: 'Todavía no se configura la contraseña del sistema (POS_PASSWORD en Railway)' });
+  }
+  if (password !== POS_PASSWORD) {
+    return res.status(401).json({ error: 'Contraseña incorrecta' });
+  }
+  res.setHeader(
+    'Set-Cookie',
+    `pos_session=${tokenSesionValido()}; HttpOnly; Path=/; Max-Age=${60 * 60 * 24 * 90}; SameSite=Lax; Secure`
+  );
+  res.json({ ok: true });
+});
+
+app.post('/api/logout', (req, res) => {
+  res.setHeader('Set-Cookie', 'pos_session=; Path=/; Max-Age=0');
+  res.json({ ok: true });
+});
+
+// Endpoints que SÍ deben quedar públicos (los usan /pedir y /resena, sin sesión)
+const RUTAS_API_PUBLICAS_EXACTAS = new Set([
+  'GET /api/sucursales',
+  'GET /api/categorias',
+  'GET /api/productos',
+  'GET /api/envios',
+  'POST /api/resenas',
+  'POST /api/clientes',
+  'POST /api/pedidos',
+]);
+
+function esRutaApiPublica(req) {
+  if (RUTAS_API_PUBLICAS_EXACTAS.has(`${req.method} ${req.path}`)) return true;
+  if (req.method === 'GET' && req.path.startsWith('/api/resenas/pedido/')) return true;
+  if (req.path === '/api/didi/webhook') return true; // DiDi no manda cookie de sesión
+  return false;
+}
+
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api/') || esRutaApiPublica(req)) return next();
+  requiereLogin(req, res, next);
+});
+
 // Sirve las dos pantallas: /pos (toma de pedidos) y /kds (monitor de cocina)
-app.use('/pos', express.static(path.join(__dirname, 'public/pos')));
-app.use('/kds', express.static(path.join(__dirname, 'public/kds')));
+app.use('/pos', requiereLogin, express.static(path.join(__dirname, 'public/pos')));
+app.use('/kds', requiereLogin, express.static(path.join(__dirname, 'public/kds')));
 app.use('/pedir', express.static(path.join(__dirname, 'public/pedir')));
 app.use('/resena', express.static(path.join(__dirname, 'public/resena')));
 app.get('/', (req, res) => res.redirect('/pos'));
