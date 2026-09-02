@@ -12,14 +12,32 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// ---------- Seguridad: contraseña compartida del personal ----------
+// ---------- Seguridad: PIN de acceso por empleado ----------
 // Protege /pos, /kds y casi todos los endpoints administrativos. Las páginas para
 // CLIENTES (/pedir, /resena) y sus llamadas necesarias se dejan siempre públicas.
 const SESSION_SECRET = process.env.SESSION_SECRET || 'cambia-esto-en-railway-por-algo-largo-y-aleatorio';
-const POS_PASSWORD = process.env.POS_PASSWORD; // configúrala en Variables de Railway
+const POS_PASSWORD = process.env.POS_PASSWORD; // PIN maestro de arranque, solo sirve mientras no haya ningún empleado dado de alta
 
-function tokenSesionValido() {
-  return crypto.createHmac('sha256', SESSION_SECRET).update('pos-sesion-ok').digest('hex');
+function firmarSesion(empleado) {
+  const payload = JSON.stringify({ id: empleado.id, nombre: empleado.nombre, puesto: empleado.puesto });
+  const payloadB64 = Buffer.from(payload).toString('base64');
+  const firma = crypto.createHmac('sha256', SESSION_SECRET).update(payloadB64).digest('hex');
+  return `${payloadB64}.${firma}`;
+}
+
+function verificarSesion(token) {
+  if (!token) return null;
+  const idx = token.lastIndexOf('.');
+  if (idx === -1) return null;
+  const payloadB64 = token.slice(0, idx);
+  const firma = token.slice(idx + 1);
+  const firmaEsperada = crypto.createHmac('sha256', SESSION_SECRET).update(payloadB64).digest('hex');
+  if (firma !== firmaEsperada) return null;
+  try {
+    return JSON.parse(Buffer.from(payloadB64, 'base64').toString());
+  } catch {
+    return null;
+  }
 }
 
 function obtenerCookie(req, nombre) {
@@ -30,39 +48,62 @@ function obtenerCookie(req, nombre) {
   return encontrada ? decodeURIComponent(encontrada.split('=').slice(1).join('=')) : null;
 }
 
-function estaAutenticado(req) {
-  if (!POS_PASSWORD) return true; // si no se configuró contraseña todavía, no bloquea (para no dejarte fuera sin querer)
-  return obtenerCookie(req, 'pos_session') === tokenSesionValido();
-}
-
 function requiereLogin(req, res, next) {
-  if (estaAutenticado(req)) return next();
+  const empleado = verificarSesion(obtenerCookie(req, 'pos_session'));
+  if (empleado) {
+    req.empleado = empleado;
+    return next();
+  }
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'No autorizado, inicia sesión' });
   }
   res.redirect(`/login?next=${encodeURIComponent(req.originalUrl)}`);
 }
 
+// El "encargado" siempre puede todo. Para lo demás, hay que estar en la lista de puestos.
+// requierePuesto() sin argumentos = solo encargado.
+function requierePuesto(...puestosPermitidos) {
+  return (req, res, next) => {
+    if (!req.empleado) return res.status(401).json({ error: 'No autorizado' });
+    if (req.empleado.puesto === 'encargado' || puestosPermitidos.includes(req.empleado.puesto)) return next();
+    return res.status(403).json({ error: 'Tu puesto no tiene permiso para hacer esto' });
+  };
+}
+
 app.use('/login', express.static(path.join(__dirname, 'public/login')));
 
-app.post('/api/login', (req, res) => {
-  const { password } = req.body;
-  if (!POS_PASSWORD) {
-    return res.status(400).json({ error: 'Todavía no se configura la contraseña del sistema (POS_PASSWORD en Railway)' });
+app.post('/api/login', async (req, res) => {
+  const { pin } = req.body;
+  if (!pin) return res.status(400).json({ error: 'Falta el PIN' });
+
+  const { rows } = await pool.query('SELECT * FROM empleados WHERE pin = $1 AND activo = true', [pin]);
+  let empleado = rows[0];
+
+  if (!empleado) {
+    // Modo de arranque: si todavía no hay ningún empleado dado de alta, se puede entrar
+    // con el PIN maestro (POS_PASSWORD en Railway) para crear al primer empleado real.
+    const { rows: countRows } = await pool.query('SELECT COUNT(*)::int AS n FROM empleados');
+    if (countRows[0].n === 0 && POS_PASSWORD && pin === POS_PASSWORD) {
+      empleado = { id: 0, nombre: 'Administrador', puesto: 'encargado' };
+    } else {
+      return res.status(401).json({ error: 'PIN incorrecto' });
+    }
   }
-  if (password !== POS_PASSWORD) {
-    return res.status(401).json({ error: 'Contraseña incorrecta' });
-  }
+
   res.setHeader(
     'Set-Cookie',
-    `pos_session=${tokenSesionValido()}; HttpOnly; Path=/; Max-Age=${60 * 60 * 24 * 90}; SameSite=Lax; Secure`
+    `pos_session=${firmarSesion(empleado)}; HttpOnly; Path=/; Max-Age=${60 * 60 * 24 * 90}; SameSite=Lax; Secure`
   );
-  res.json({ ok: true });
+  res.json({ ok: true, nombre: empleado.nombre, puesto: empleado.puesto });
 });
 
 app.post('/api/logout', (req, res) => {
   res.setHeader('Set-Cookie', 'pos_session=; Path=/; Max-Age=0');
   res.json({ ok: true });
+});
+
+app.get('/api/me', requiereLogin, (req, res) => {
+  res.json(req.empleado);
 });
 
 // Endpoints que SÍ deben quedar públicos (los usan /pedir y /resena, sin sesión)
@@ -248,14 +289,14 @@ app.get('/api/productos', async (req, res) => {
 });
 
 // ---------- Administración del menú: categorías ----------
-app.post('/api/categorias', async (req, res) => {
+app.post('/api/categorias', requierePuesto(), async (req, res) => {
   const { nombre } = req.body;
   if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Falta el nombre' });
   const { rows } = await pool.query('INSERT INTO categorias (nombre) VALUES ($1) RETURNING *', [nombre.trim()]);
   res.json(rows[0]);
 });
 
-app.patch('/api/categorias/:id', async (req, res) => {
+app.patch('/api/categorias/:id', requierePuesto(), async (req, res) => {
   const { nombre } = req.body;
   if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Falta el nombre' });
   const { rows } = await pool.query(
@@ -266,7 +307,7 @@ app.patch('/api/categorias/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.delete('/api/categorias/:id', async (req, res) => {
+app.delete('/api/categorias/:id', requierePuesto(), async (req, res) => {
   const { rows: enUso } = await pool.query('SELECT COUNT(*)::int AS n FROM productos WHERE categoria_id = $1', [req.params.id]);
   if (enUso[0].n > 0) {
     return res.status(400).json({ error: `No se puede borrar: hay ${enUso[0].n} producto(s) en esta categoría. Muévelos o bórralos primero.` });
@@ -276,7 +317,7 @@ app.delete('/api/categorias/:id', async (req, res) => {
 });
 
 // ---------- Administración del menú: productos ----------
-app.post('/api/productos', async (req, res) => {
+app.post('/api/productos', requierePuesto(), async (req, res) => {
   const { nombre, categoria_id, precio, estacion } = req.body;
   if (!nombre || !categoria_id || precio === undefined) {
     return res.status(400).json({ error: 'Faltan datos del producto' });
@@ -288,7 +329,7 @@ app.post('/api/productos', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.patch('/api/productos/:id', async (req, res) => {
+app.patch('/api/productos/:id', requierePuesto(), async (req, res) => {
   const { id } = req.params;
   const { nombre, categoria_id, precio, disponible, estacion, imagen } = req.body;
   const { rows } = await pool.query(
@@ -308,7 +349,7 @@ app.patch('/api/productos/:id', async (req, res) => {
 
 // "Eliminar" un producto lo oculta del menú (disponible = false) en vez de borrarlo,
 // para no romper el historial de pedidos que ya lo usaron.
-app.delete('/api/productos/:id', async (req, res) => {
+app.delete('/api/productos/:id', requierePuesto(), async (req, res) => {
   const { rows } = await pool.query(
     'UPDATE productos SET disponible = false WHERE id = $1 RETURNING *',
     [req.params.id]
@@ -318,7 +359,7 @@ app.delete('/api/productos/:id', async (req, res) => {
 });
 
 // ---------- Insumos ----------
-app.get('/api/insumos', async (req, res) => {
+app.get('/api/insumos', requierePuesto(), async (req, res) => {
   const { sucursal_id } = req.query;
   const { rows } = await pool.query(
     `SELECT i.*, COALESCE(s.stock_actual, 0) AS stock_actual
@@ -330,7 +371,7 @@ app.get('/api/insumos', async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/insumos', async (req, res) => {
+app.post('/api/insumos', requierePuesto(), async (req, res) => {
   const { nombre, unidad, costo_unitario } = req.body;
   if (!nombre || !unidad) return res.status(400).json({ error: 'Falta el nombre o la unidad' });
   try {
@@ -344,7 +385,7 @@ app.post('/api/insumos', async (req, res) => {
   }
 });
 
-app.patch('/api/insumos/:id', async (req, res) => {
+app.patch('/api/insumos/:id', requierePuesto(), async (req, res) => {
   const { nombre, unidad, costo_unitario } = req.body;
   const { rows } = await pool.query(
     `UPDATE insumos SET
@@ -357,12 +398,12 @@ app.patch('/api/insumos/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.delete('/api/insumos/:id', async (req, res) => {
+app.delete('/api/insumos/:id', requierePuesto(), async (req, res) => {
   await pool.query('DELETE FROM insumos WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
 
-app.patch('/api/insumos/:id/stock', async (req, res) => {
+app.patch('/api/insumos/:id/stock', requierePuesto(), async (req, res) => {
   const { sucursal_id, stock_actual } = req.body;
   if (!sucursal_id || stock_actual === undefined) {
     return res.status(400).json({ error: 'Falta sucursal_id o stock_actual' });
@@ -378,7 +419,7 @@ app.patch('/api/insumos/:id/stock', async (req, res) => {
 });
 
 // ---------- Recetas (insumos por producto) ----------
-app.get('/api/productos/:id/receta', async (req, res) => {
+app.get('/api/productos/:id/receta', requierePuesto(), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT pi.id, pi.insumo_id, pi.cantidad, i.nombre AS insumo_nombre, i.unidad
      FROM producto_insumos pi JOIN insumos i ON i.id = pi.insumo_id
@@ -388,7 +429,7 @@ app.get('/api/productos/:id/receta', async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/productos/:id/receta', async (req, res) => {
+app.post('/api/productos/:id/receta', requierePuesto(), async (req, res) => {
   const { insumo_id, cantidad } = req.body;
   if (!insumo_id || cantidad === undefined) {
     return res.status(400).json({ error: 'Falta el insumo o la cantidad' });
@@ -403,7 +444,7 @@ app.post('/api/productos/:id/receta', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.delete('/api/productos/:id/receta/:insumoId', async (req, res) => {
+app.delete('/api/productos/:id/receta/:insumoId', requierePuesto(), async (req, res) => {
   await pool.query(
     'DELETE FROM producto_insumos WHERE producto_id = $1 AND insumo_id = $2',
     [req.params.id, req.params.insumoId]
@@ -414,7 +455,7 @@ app.delete('/api/productos/:id/receta/:insumoId', async (req, res) => {
 
 // ---------- Opciones de modificador: multiplicador e insumos extra ----------
 // ---------- Grupos de modificadores (variantes/extras) ----------
-app.post('/api/productos/:id/grupos', async (req, res) => {
+app.post('/api/productos/:id/grupos', requierePuesto(), async (req, res) => {
   const { nombre, tipo, obligatorio } = req.body;
   if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Falta el nombre del grupo' });
   const { rows } = await pool.query(
@@ -426,7 +467,7 @@ app.post('/api/productos/:id/grupos', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.patch('/api/grupos/:id', async (req, res) => {
+app.patch('/api/grupos/:id', requierePuesto(), async (req, res) => {
   const { nombre, tipo, obligatorio } = req.body;
   const { rows } = await pool.query(
     `UPDATE grupos_modificadores SET
@@ -440,12 +481,12 @@ app.patch('/api/grupos/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.delete('/api/grupos/:id', async (req, res) => {
+app.delete('/api/grupos/:id', requierePuesto(), async (req, res) => {
   await pool.query('DELETE FROM grupos_modificadores WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
 
-app.post('/api/grupos/:id/opciones', async (req, res) => {
+app.post('/api/grupos/:id/opciones', requierePuesto(), async (req, res) => {
   const { nombre, precio, multiplicador } = req.body;
   if (!nombre || !nombre.trim() || precio === undefined) {
     return res.status(400).json({ error: 'Falta el nombre o el precio de la opción' });
@@ -459,7 +500,7 @@ app.post('/api/grupos/:id/opciones', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.patch('/api/opciones/:id', async (req, res) => {
+app.patch('/api/opciones/:id', requierePuesto(), async (req, res) => {
   const { nombre, precio, multiplicador } = req.body;
   const { rows } = await pool.query(
     `UPDATE opciones_modificador SET
@@ -473,12 +514,12 @@ app.patch('/api/opciones/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.delete('/api/opciones/:id', async (req, res) => {
+app.delete('/api/opciones/:id', requierePuesto(), async (req, res) => {
   await pool.query('DELETE FROM opciones_modificador WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
 
-app.get('/api/opciones/:id/insumos', async (req, res) => {
+app.get('/api/opciones/:id/insumos', requierePuesto(), async (req, res) => {
   const { rows } = await pool.query(
     `SELECT oi.id, oi.insumo_id, oi.cantidad, i.nombre AS insumo_nombre, i.unidad
      FROM opcion_insumos oi JOIN insumos i ON i.id = oi.insumo_id
@@ -488,7 +529,7 @@ app.get('/api/opciones/:id/insumos', async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/opciones/:id/insumos', async (req, res) => {
+app.post('/api/opciones/:id/insumos', requierePuesto(), async (req, res) => {
   const { insumo_id, cantidad } = req.body;
   if (!insumo_id || cantidad === undefined) {
     return res.status(400).json({ error: 'Falta el insumo o la cantidad' });
@@ -503,7 +544,7 @@ app.post('/api/opciones/:id/insumos', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.delete('/api/opciones/:id/insumos/:insumoId', async (req, res) => {
+app.delete('/api/opciones/:id/insumos/:insumoId', requierePuesto(), async (req, res) => {
   await pool.query(
     'DELETE FROM opcion_insumos WHERE opcion_id = $1 AND insumo_id = $2',
     [req.params.id, req.params.insumoId]
@@ -513,7 +554,7 @@ app.delete('/api/opciones/:id/insumos/:insumoId', async (req, res) => {
 
 
 // ---------- Conteo físico de inventario ----------
-app.post('/api/conteos', async (req, res) => {
+app.post('/api/conteos', requierePuesto(), async (req, res) => {
   const { sucursal_id, fecha, conteos } = req.body; // conteos: [{ insumo_id, contado }]
   if (!sucursal_id || !conteos || !conteos.length) {
     return res.status(400).json({ error: 'Faltan datos del conteo' });
@@ -557,7 +598,7 @@ app.post('/api/conteos', async (req, res) => {
   res.json(guardado[0]);
 });
 
-app.get('/api/conteos', async (req, res) => {
+app.get('/api/conteos', requierePuesto(), async (req, res) => {
   const { sucursal_id } = req.query;
   const { rows } = await pool.query(
     'SELECT * FROM conteos_inventario WHERE sucursal_id = $1 ORDER BY creado_en DESC LIMIT 20',
@@ -587,7 +628,7 @@ function sugerirInsumo(descripcion, insumos) {
   );
 }
 
-app.post('/api/compras/leer-ticket', async (req, res) => {
+app.post('/api/compras/leer-ticket', requierePuesto(), async (req, res) => {
   const { imagen_base64, media_type } = req.body;
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(400).json({ error: 'Falta configurar ANTHROPIC_API_KEY en el .env' });
@@ -643,7 +684,7 @@ Responde ÚNICAMENTE con un JSON válido, sin texto adicional, sin explicaciones
   }
 });
 
-app.post('/api/compras', async (req, res) => {
+app.post('/api/compras', requierePuesto(), async (req, res) => {
   const { sucursal_id, proveedor, fecha, items } = req.body; // items: [{ insumo_id, descripcion, cantidad, costo_unitario }]
   if (!sucursal_id || !items || !items.length) {
     return res.status(400).json({ error: 'Faltan datos de la compra' });
@@ -689,7 +730,7 @@ app.post('/api/compras', async (req, res) => {
   }
 });
 
-app.get('/api/compras', async (req, res) => {
+app.get('/api/compras', requierePuesto(), async (req, res) => {
   const { sucursal_id } = req.query;
   const { rows } = await pool.query(
     'SELECT * FROM compras WHERE sucursal_id = $1 ORDER BY creado_en DESC LIMIT 30',
@@ -709,7 +750,7 @@ app.get('/api/compras', async (req, res) => {
 
 
 // ---------- Importar recetas en lote (CSV: producto, insumo, unidad, cantidad, costo) ----------
-app.post('/api/recetas/importar', async (req, res) => {
+app.post('/api/recetas/importar', requierePuesto(), async (req, res) => {
   const { filas } = req.body;
   if (!filas || !filas.length) {
     return res.status(400).json({ error: 'No se recibieron filas' });
@@ -776,7 +817,7 @@ app.post('/api/recetas/importar', async (req, res) => {
 });
 
 // ---------- Reparto de utilidades entre socios ----------
-app.post('/api/distribuciones', async (req, res) => {
+app.post('/api/distribuciones', requierePuesto(), async (req, res) => {
   const { fecha, socio, monto, metodo_pago, nota } = req.body;
   if (!fecha || !socio || !monto) {
     return res.status(400).json({ error: 'Falta la fecha, el socio o el monto' });
@@ -789,14 +830,14 @@ app.post('/api/distribuciones', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.get('/api/distribuciones', async (req, res) => {
+app.get('/api/distribuciones', requierePuesto(), async (req, res) => {
   const { rows } = await pool.query(
     'SELECT * FROM distribuciones_utilidad ORDER BY fecha DESC, creado_en DESC LIMIT 200'
   );
   res.json(rows);
 });
 
-app.delete('/api/distribuciones/:id', async (req, res) => {
+app.delete('/api/distribuciones/:id', requierePuesto(), async (req, res) => {
   await pool.query('DELETE FROM distribuciones_utilidad WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
@@ -842,7 +883,7 @@ async function registrarLlamadaDidi(req, res) {
 app.post('/api/didi/webhook', registrarLlamadaDidi);
 app.get('/api/didi/webhook', registrarLlamadaDidi);
 
-app.get('/api/didi/webhook-logs', async (req, res) => {
+app.get('/api/didi/webhook-logs', requierePuesto(), async (req, res) => {
   const { rows } = await pool.query('SELECT * FROM didi_webhook_logs ORDER BY recibido_en DESC LIMIT 50');
   res.json(rows);
 });
@@ -911,7 +952,7 @@ app.get('/api/resenas', async (req, res) => {
   res.json(rows);
 });
 
-app.patch('/api/sucursales/:id', async (req, res) => {
+app.patch('/api/sucursales/:id', requierePuesto(), async (req, res) => {
   const { google_maps_url } = req.body;
   const { rows } = await pool.query(
     'UPDATE sucursales SET google_maps_url = COALESCE($1, google_maps_url) WHERE id = $2 RETURNING *',
@@ -932,7 +973,7 @@ app.get('/api/recompensas', async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/recompensas', async (req, res) => {
+app.post('/api/recompensas', requierePuesto(), async (req, res) => {
   const { nombre, puntos_requeridos, monto_descuento } = req.body;
   if (!nombre || !puntos_requeridos || !monto_descuento) {
     return res.status(400).json({ error: 'Faltan datos de la recompensa' });
@@ -944,7 +985,7 @@ app.post('/api/recompensas', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.patch('/api/recompensas/:id', async (req, res) => {
+app.patch('/api/recompensas/:id', requierePuesto(), async (req, res) => {
   const { nombre, puntos_requeridos, monto_descuento, activo } = req.body;
   const { rows } = await pool.query(
     `UPDATE recompensas_lealtad SET
@@ -959,12 +1000,12 @@ app.patch('/api/recompensas/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.delete('/api/recompensas/:id', async (req, res) => {
+app.delete('/api/recompensas/:id', requierePuesto(), async (req, res) => {
   await pool.query('DELETE FROM recompensas_lealtad WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
 
-app.post('/api/pedidos/:id/canjear-recompensa', async (req, res) => {
+app.post('/api/pedidos/:id/canjear-recompensa', requierePuesto('cajero'), async (req, res) => {
   const { id } = req.params;
   const { recompensa_id } = req.body;
 
@@ -1004,7 +1045,7 @@ app.post('/api/pedidos/:id/canjear-recompensa', async (req, res) => {
   res.json(pedidoCompleto);
 });
 
-app.post('/api/pedidos/:id/quitar-canje', async (req, res) => {
+app.post('/api/pedidos/:id/quitar-canje', requierePuesto('cajero'), async (req, res) => {
   const { id } = req.params;
   const { rows: pedidoRows } = await pool.query('SELECT * FROM pedidos WHERE id = $1', [id]);
   const pedido = pedidoRows[0];
@@ -1027,6 +1068,53 @@ app.post('/api/pedidos/:id/quitar-canje', async (req, res) => {
   res.json(pedidoCompleto);
 });
 
+// ---------- Empleados (solo el encargado los administra) ----------
+app.get('/api/empleados', requiereLogin, requierePuesto(), async (req, res) => {
+  const { rows } = await pool.query('SELECT id, nombre, puesto, pin, activo FROM empleados ORDER BY nombre');
+  res.json(rows);
+});
+
+app.post('/api/empleados', requiereLogin, requierePuesto(), async (req, res) => {
+  const { nombre, puesto, pin } = req.body;
+  if (!nombre || !puesto || !pin) return res.status(400).json({ error: 'Faltan datos' });
+  if (!/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'El PIN debe ser de 4 dígitos' });
+  if (!['mesero', 'cajero', 'encargado'].includes(puesto)) return res.status(400).json({ error: 'Puesto inválido' });
+  try {
+    const { rows } = await pool.query(
+      'INSERT INTO empleados (nombre, puesto, pin) VALUES ($1,$2,$3) RETURNING id, nombre, puesto, pin, activo',
+      [nombre.trim(), puesto, pin]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: 'Ya existe un empleado con ese PIN, usa otro' });
+  }
+});
+
+app.patch('/api/empleados/:id', requiereLogin, requierePuesto(), async (req, res) => {
+  const { nombre, puesto, pin, activo } = req.body;
+  if (pin && !/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'El PIN debe ser de 4 dígitos' });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE empleados SET
+         nombre = COALESCE($1, nombre),
+         puesto = COALESCE($2, puesto),
+         pin = COALESCE($3, pin),
+         activo = COALESCE($4, activo)
+       WHERE id = $5 RETURNING id, nombre, puesto, pin, activo`,
+      [nombre, puesto, pin, activo, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Empleado no encontrado' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(400).json({ error: 'Ya existe un empleado con ese PIN' });
+  }
+});
+
+app.delete('/api/empleados/:id', requiereLogin, requierePuesto(), async (req, res) => {
+  await pool.query('DELETE FROM empleados WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono, buscar } = req.query;
@@ -1045,7 +1133,7 @@ app.get('/api/clientes', async (req, res) => {
   res.json(rows);
 });
 
-app.patch('/api/clientes/:id', async (req, res) => {
+app.patch('/api/clientes/:id', requierePuesto('cajero'), async (req, res) => {
   const { nombre, telefono, direccion, colonia } = req.body;
   try {
     const { rows } = await pool.query(
@@ -1064,7 +1152,7 @@ app.patch('/api/clientes/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/clientes/:id', async (req, res) => {
+app.delete('/api/clientes/:id', requierePuesto('cajero'), async (req, res) => {
   try {
     await pool.query('DELETE FROM clientes WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
@@ -1100,7 +1188,7 @@ app.post('/api/clientes', async (req, res) => {
 // Agrupa por pedido_externo+fecha+sucursal para reconstruir cada pedido completo.
 // A propósito NO descuenta inventario (es venta que ya pasó antes de este sistema)
 // ni avisa a cocina (son pedidos históricos, no en curso).
-app.post('/api/importar-historico', async (req, res) => {
+app.post('/api/importar-historico', requierePuesto(), async (req, res) => {
   const { filas } = req.body;
   if (!filas || !filas.length) {
     return res.status(400).json({ error: 'No se recibieron filas' });
@@ -1411,7 +1499,7 @@ app.patch('/api/pedidos/:id/estado', async (req, res) => {
 // Finaliza/cierra el pedido de verdad (ya no se puede editar ni cobrar de nuevo).
 // Es independiente del estado de cocina: un pedido puede seguir abierto en mesa
 // aunque la comida ya haya salido de cocina.
-app.patch('/api/pedidos/:id/finalizar', async (req, res) => {
+app.patch('/api/pedidos/:id/finalizar', requierePuesto('cajero'), async (req, res) => {
   const { id } = req.params;
   await pool.query(`UPDATE pedido_items SET estado = 'entregado' WHERE pedido_id = $1 AND cancelado = false`, [id]);
   const { rows } = await pool.query(
@@ -1447,7 +1535,7 @@ app.get('/api/pedidos/:id', async (req, res) => {
 });
 
 // Cancela un pedido completo (esté pendiente o ya cobrado), por si se equivocan
-app.patch('/api/pedidos/:id/cancelar', async (req, res) => {
+app.patch('/api/pedidos/:id/cancelar', requierePuesto('cajero'), async (req, res) => {
   const { id } = req.params;
 
   const { rows: pedidoRows } = await pool.query('SELECT * FROM pedidos WHERE id = $1', [id]);
@@ -1552,7 +1640,7 @@ app.patch('/api/pedido_items/:id/cancelar', async (req, res) => {
   }
 });
 
-app.post('/api/pedidos/:id/pagos', async (req, res) => {
+app.post('/api/pedidos/:id/pagos', requierePuesto('cajero'), async (req, res) => {
   const { id } = req.params;
   const { pagos } = req.body; // [{ metodo, monto, recibido }]
 
@@ -1634,7 +1722,7 @@ app.post('/api/pedidos/:id/pagos', async (req, res) => {
 });
 
 // ---------- Gastos ----------
-app.post('/api/gastos', async (req, res) => {
+app.post('/api/gastos', requierePuesto('cajero'), async (req, res) => {
   const { sucursal_id, descripcion, monto, metodo_pago } = req.body;
   if (!sucursal_id || !descripcion || !monto || !metodo_pago) {
     return res.status(400).json({ error: 'Faltan datos del gasto' });
@@ -1649,7 +1737,7 @@ app.post('/api/gastos', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.get('/api/gastos', async (req, res) => {
+app.get('/api/gastos', requierePuesto('cajero'), async (req, res) => {
   const { sucursal_id, fecha } = req.query;
   let query = 'SELECT * FROM gastos WHERE 1=1';
   const params = [];
@@ -1666,7 +1754,7 @@ app.get('/api/gastos', async (req, res) => {
   res.json(rows);
 });
 
-app.delete('/api/gastos/:id', async (req, res) => {
+app.delete('/api/gastos/:id', requierePuesto('cajero'), async (req, res) => {
   await pool.query('DELETE FROM gastos WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
@@ -1780,7 +1868,7 @@ async function calcularCorte(sucursalId, fechaDesde, fechaHasta) {
   };
 }
 
-app.get('/api/corte', async (req, res) => {
+app.get('/api/corte', requierePuesto('cajero'), async (req, res) => {
   const { sucursal_id, fecha, fecha_hasta } = req.query;
   if (!sucursal_id || !fecha) {
     return res.status(400).json({ error: 'Falta sucursal_id o fecha' });
@@ -1788,7 +1876,7 @@ app.get('/api/corte', async (req, res) => {
   res.json(await calcularCorte(sucursal_id, fecha, fecha_hasta));
 });
 
-app.get('/api/corte/cerrado', async (req, res) => {
+app.get('/api/corte/cerrado', requierePuesto('cajero'), async (req, res) => {
   const { sucursal_id, fecha } = req.query;
   const { rows } = await pool.query(
     'SELECT * FROM cortes WHERE sucursal_id = $1 AND fecha = $2',
@@ -1797,7 +1885,7 @@ app.get('/api/corte/cerrado', async (req, res) => {
   res.json(rows[0] || null);
 });
 
-app.post('/api/corte/cerrar', async (req, res) => {
+app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
   const { sucursal_id, fecha, contado } = req.body; // contado: { efectivo, tarjeta, transferencia }
   if (!sucursal_id || !fecha || !contado) {
     return res.status(400).json({ error: 'Faltan datos para cerrar el corte' });
@@ -1850,7 +1938,7 @@ app.get('/api/envios', async (req, res) => {
   res.json(rows);
 });
 
-app.post('/api/envios', async (req, res) => {
+app.post('/api/envios', requierePuesto(), async (req, res) => {
   const { sucursal_id, colonia, costo } = req.body;
   if (!sucursal_id || !colonia || costo === undefined) {
     return res.status(400).json({ error: 'Faltan datos' });
@@ -1869,7 +1957,7 @@ app.post('/api/envios', async (req, res) => {
   }
 });
 
-app.patch('/api/envios/:id', async (req, res) => {
+app.patch('/api/envios/:id', requierePuesto(), async (req, res) => {
   const { costo } = req.body;
   const { rows } = await pool.query(
     'UPDATE costos_envio SET costo = $1 WHERE id = $2 RETURNING *',
@@ -1878,13 +1966,13 @@ app.patch('/api/envios/:id', async (req, res) => {
   res.json(rows[0]);
 });
 
-app.delete('/api/envios/:id', async (req, res) => {
+app.delete('/api/envios/:id', requierePuesto(), async (req, res) => {
   await pool.query('DELETE FROM costos_envio WHERE id = $1', [req.params.id]);
   res.json({ ok: true });
 });
 
 // ---------- Planeación de compras con Claude ----------
-app.post('/api/plan-compras', async (req, res) => {
+app.post('/api/plan-compras', requierePuesto(), async (req, res) => {
   const { sucursal_id, dias = 7 } = req.body;
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(400).json({ error: 'Falta configurar ANTHROPIC_API_KEY en el .env' });
