@@ -1400,6 +1400,12 @@ async function agregarEnvio() {
   cargarEnvios();
 }
 
+document.getElementById('btn-cerrar-sesion').addEventListener('click', async () => {
+  if (!confirm('¿Cerrar sesión?')) return;
+  await fetch('/api/logout', { method: 'POST' });
+  window.location.href = '/login';
+});
+
 cargarInicial();
 
 // ==================== LEALTAD: RECOMPENSAS ====================
