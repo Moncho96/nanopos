@@ -1478,8 +1478,14 @@ async function cargarInformes() {
 
   const resp = await fetch(`/api/informes?sucursal_id=${sucursalId}&fecha_desde=${desde}&fecha_hasta=${hasta}`);
   if (!resp.ok) {
-    const err = await resp.json();
-    cont.innerHTML = `<p style="color:#b8232f;text-align:center;padding:20px">${err.error || 'No se pudo cargar'}</p>`;
+    let mensaje = `No se pudo cargar (código ${resp.status})`;
+    try {
+      const err = await resp.json();
+      if (err.error) mensaje = err.error;
+    } catch (e) {
+      // la respuesta no era JSON (ej. error interno del servidor); se deja el mensaje genérico con el código
+    }
+    cont.innerHTML = `<p style="color:#b8232f;text-align:center;padding:20px">${mensaje}</p>`;
     return;
   }
   const d = await resp.json();
