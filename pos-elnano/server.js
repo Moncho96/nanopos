@@ -1814,6 +1814,136 @@ function fechaNegocioActualJS() {
   return `${y}-${m}-${d}`;
 }
 
+// ---------- Informes: KPIs del negocio ----------
+function filtroFechaYSucursal(alias, columnaFecha, fechaDesde, fechaHasta, sucursalId, params) {
+  params.push(fechaDesde, fechaHasta);
+  let sql = ` AND ${fechaNegocioSQL(`${alias}.${columnaFecha}`)} BETWEEN $${params.length - 1} AND $${params.length}`;
+  if (sucursalId) {
+    params.push(sucursalId);
+    sql += ` AND ${alias}.sucursal_id = $${params.length}`;
+  }
+  return sql;
+}
+
+app.get('/api/informes', requierePuesto('cajero'), async (req, res) => {
+  const { sucursal_id, fecha_desde, fecha_hasta } = req.query;
+  if (!fecha_desde || !fecha_hasta) return res.status(400).json({ error: 'Falta el rango de fechas' });
+
+  // 1. KPIs generales (solo pedidos pagados y no cancelados)
+  const p1 = [];
+  const f1 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p1);
+  const { rows: kpiRows } = await pool.query(
+    `SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(total),0) AS ventas,
+            COALESCE(AVG(total),0) AS ticket_promedio, COALESCE(SUM(costo_envio),0) AS envios,
+            COALESCE(SUM(descuento_lealtad),0) AS descuentos_lealtad
+     FROM pedidos p WHERE p.cancelado = false AND p.pagado = true ${f1}`,
+    p1
+  );
+
+  // 2. Cancelados (para calcular % contra el total de pedidos creados, pagados o no)
+  const p2 = [];
+  const f2 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p2);
+  const { rows: totalCreadosRows } = await pool.query(`SELECT COUNT(*)::int AS n FROM pedidos p WHERE 1=1 ${f2}`, p2);
+  const p3 = [];
+  const f3 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p3);
+  const { rows: canceladosRows } = await pool.query(`SELECT COUNT(*)::int AS n FROM pedidos p WHERE p.cancelado = true ${f3}`, p3);
+
+  // 3. Ventas por método de pago
+  const p4 = [];
+  const f4 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p4);
+  const { rows: porMetodo } = await pool.query(
+    `SELECT pg.metodo, COALESCE(SUM(pg.monto),0) AS total
+     FROM pagos pg JOIN pedidos p ON p.id = pg.pedido_id
+     WHERE p.cancelado = false ${f4}
+     GROUP BY pg.metodo ORDER BY total DESC`,
+    p4
+  );
+
+  // 4. Ventas por tipo de pedido
+  const p5 = [];
+  const f5 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p5);
+  const { rows: porTipo } = await pool.query(
+    `SELECT p.tipo, COUNT(*)::int AS pedidos, COALESCE(SUM(p.total),0) AS total
+     FROM pedidos p WHERE p.cancelado = false AND p.pagado = true ${f5}
+     GROUP BY p.tipo ORDER BY total DESC`,
+    p5
+  );
+
+  // 5. Ventas por día (para la gráfica de tendencia)
+  const p6 = [];
+  const f6 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p6);
+  const { rows: porDia } = await pool.query(
+    `SELECT ${fechaNegocioSQL('p.creado_en')} AS dia, COALESCE(SUM(p.total),0) AS total, COUNT(*)::int AS pedidos
+     FROM pedidos p WHERE p.cancelado = false AND p.pagado = true ${f6}
+     GROUP BY dia ORDER BY dia`,
+    p6
+  );
+
+  // 6. Top 10 productos más vendidos
+  const p7 = [];
+  const f7 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p7);
+  const { rows: topProductos } = await pool.query(
+    `SELECT pi.producto_nombre, SUM(pi.cantidad)::int AS cantidad, COALESCE(SUM(pi.cantidad * pi.precio_unitario),0) AS total
+     FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id
+     WHERE pi.cancelado = false AND p.cancelado = false AND p.pagado = true ${f7}
+     GROUP BY pi.producto_nombre ORDER BY total DESC LIMIT 10`,
+    p7
+  );
+
+  // 7. Tiempo promedio de cocina (creado -> listo)
+  const p8 = [];
+  const f8 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p8);
+  const { rows: tiempoRows } = await pool.query(
+    `SELECT AVG(EXTRACT(EPOCH FROM (listo_en - creado_en))) AS segundos, COUNT(*)::int AS n
+     FROM pedidos p WHERE listo_en IS NOT NULL AND p.cancelado = false ${f8}`,
+    p8
+  );
+
+  // 8. Reseñas
+  const p9 = [];
+  const f9 = filtroFechaYSucursal('r', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p9);
+  const { rows: resenasRows } = await pool.query(
+    `SELECT COALESCE(AVG(calificacion),0) AS promedio, COUNT(*)::int AS n
+     FROM resenas r WHERE 1=1 ${f9}`,
+    p9
+  );
+
+  // 9. Clientes nuevos (no se puede filtrar por sucursal, los clientes no son por sucursal)
+  const { rows: clientesRows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM clientes
+     WHERE ${fechaNegocioSQL('creado_en')} BETWEEN $1 AND $2`,
+    [fecha_desde, fecha_hasta]
+  );
+
+  // 10. Gastos
+  const p10 = [];
+  const f10 = filtroFechaYSucursal('g', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p10);
+  const { rows: gastosRows } = await pool.query(
+    `SELECT COALESCE(SUM(monto),0) AS total FROM gastos g WHERE 1=1 ${f10}`,
+    p10
+  );
+
+  res.json({
+    pedidos: kpiRows[0].pedidos,
+    ventas: Number(kpiRows[0].ventas),
+    ticketPromedio: Number(kpiRows[0].ticket_promedio),
+    envios: Number(kpiRows[0].envios),
+    descuentosLealtad: Number(kpiRows[0].descuentos_lealtad),
+    pedidosCreadosTotal: totalCreadosRows[0].n,
+    pedidosCancelados: canceladosRows[0].n,
+    porcentajeCancelados: totalCreadosRows[0].n ? Number(((canceladosRows[0].n / totalCreadosRows[0].n) * 100).toFixed(1)) : 0,
+    porMetodo: porMetodo.map((r) => ({ metodo: r.metodo, total: Number(r.total) })),
+    porTipo: porTipo.map((r) => ({ tipo: r.tipo, pedidos: r.pedidos, total: Number(r.total) })),
+    porDia: porDia.map((r) => ({ dia: r.dia, total: Number(r.total), pedidos: r.pedidos })),
+    topProductos: topProductos.map((r) => ({ nombre: r.producto_nombre, cantidad: r.cantidad, total: Number(r.total) })),
+    tiempoPromedioCocinaMin: tiempoRows[0].segundos ? Math.round((Number(tiempoRows[0].segundos) / 60) * 10) / 10 : null,
+    resenaPromedio: resenasRows[0].n ? Number(Number(resenasRows[0].promedio).toFixed(2)) : null,
+    resenaCantidad: resenasRows[0].n,
+    clientesNuevos: clientesRows[0].n,
+    gastos: Number(gastosRows[0].total),
+  });
+});
+
 // ---------- Corte de caja ----------
 async function calcularCorte(sucursalId, fechaDesde, fechaHasta) {
   fechaHasta = fechaHasta || fechaDesde;
