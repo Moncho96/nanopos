@@ -1883,10 +1883,10 @@ app.get('/api/informes', requierePuesto('cajero'), async (req, res) => {
   const p7 = [];
   const f7 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p7);
   const { rows: topProductos } = await pool.query(
-    `SELECT pi.producto_nombre, SUM(pi.cantidad)::int AS cantidad, COALESCE(SUM(pi.cantidad * pi.precio_unitario),0) AS total
-     FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id
+    `SELECT pr.nombre AS producto_nombre, SUM(pi.cantidad)::int AS cantidad, COALESCE(SUM(pi.cantidad * pi.precio_unitario),0) AS total
+     FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id JOIN productos pr ON pr.id = pi.producto_id
      WHERE pi.cancelado = false AND p.cancelado = false AND p.pagado = true ${f7}
-     GROUP BY pi.producto_nombre ORDER BY total DESC LIMIT 10`,
+     GROUP BY pr.nombre ORDER BY total DESC LIMIT 10`,
     p7
   );
 

@@ -746,6 +746,24 @@ Para activar esto en tu base de datos ya desplegada:
 4. En menú ☰ → "🧑‍💼 Empleados", edita a cada quien y asígnale su sucursal (o déjala en
    "Todas" si de verdad necesita ver ambas).
 
+## 35. Informes: dashboard de KPIs
+
+Nueva pestaña **"📈 Informes"** (menú ☰, cajero o encargado): elige un rango de fechas (con
+accesos rápidos "Hoy" / "Esta semana" / "Este mes", o fechas manuales) y ve de un jalón:
+
+- **KPIs principales**: ventas, pedidos cobrados, ticket promedio, % de cancelados, tiempo
+  promedio en cocina, calificación promedio de reseñas.
+- **Resumen financiero**: ventas menos gastos registrados menos descuentos de lealtad (no
+  incluye el costo de los insumos consumidos, solo lo que ya se registra en el sistema).
+- **Ventas por día** (para ver la tendencia del periodo).
+- **Ventas por método de pago** y **por tipo de pedido** (mesa/para llevar/domicilio).
+- **Top 10 productos más vendidos** (cantidad y dinero generado).
+- **Clientes nuevos** en el periodo.
+
+Respeta el selector de sucursal de arriba (si eliges una sucursal, todo se filtra a esa; si el
+empleado tiene sucursal asignada, ya viene fijo ahí). No requiere ninguna migración de base de
+datos — solo sube `server.js`, `public/pos/index.html`, `public/pos/app.js` a GitHub.
+
 ## Estructura del proyecto
 
 ```
