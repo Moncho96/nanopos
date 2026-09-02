@@ -158,10 +158,9 @@ function renderPedidoRow(pedido) {
   } else {
     badgeEstado = `<span class="badge badge-pendiente">⏳ Por cobrar</span>`;
   }
-  const badgeCocina =
-    !pedido.cancelado && pedido.estado !== 'entregado'
-      ? `<span class="badge" style="background:#eee;color:#555">${ESTADO_COCINA_LABEL[pedido.estado] || pedido.estado}</span>`
-      : '';
+  const badgeCocina = !pedido.cancelado
+    ? `<span class="badge" style="background:#eee;color:#555">${ESTADO_COCINA_LABEL[pedido.estado] || pedido.estado}</span>`
+    : '';
 
   return `
     <div class="pedido-row" data-id="${pedido.id}">
@@ -258,8 +257,11 @@ function abrirOverlayNuevo(tipo) {
 
 async function abrirOverlayEditar(pedidoId) {
   const pedido = await fetch(`/api/pedidos/${pedidoId}`).then((r) => r.json());
-  ticketState = { modo: 'editar', tipo: pedido.tipo, pedidoId: pedido.id, pedidoData: pedido, soloLectura: pedido.cancelado || pedido.estado === 'entregado' };
-  document.getElementById('overlay-titulo').textContent = `Pedido #${pedido.numero_dia ?? pedido.id}` + (pedido.pagado ? ' — cobrado' : '');
+  ticketState = { modo: 'editar', tipo: pedido.tipo, pedidoId: pedido.id, pedidoData: pedido, soloLectura: pedido.cancelado || pedido.finalizado };
+  let sufijoTitulo = '';
+  if (pedido.finalizado) sufijoTitulo = ' — finalizado';
+  else if (pedido.pagado) sufijoTitulo = ' — cobrado';
+  document.getElementById('overlay-titulo').textContent = `Pedido #${pedido.numero_dia ?? pedido.id}${sufijoTitulo}`;
   document.querySelector('.overlay-body').classList.remove('vista-productos');
   prepararCamposCliente();
   document.getElementById('ticket-cliente-nombre').value = pedido.cliente_nombre || '';
@@ -3128,11 +3130,7 @@ async function finalizarPedido(pedido) {
   const avisoPago = pedido.pagado ? '' : '\n\n⚠️ Este pedido todavía no está cobrado — ¿de verdad quieres finalizarlo sin cobrar?';
   if (!confirm(`¿Finalizar el pedido #${pedido.numero_dia ?? pedido.id}? Ya no se podrá editar después.${avisoPago}`)) return;
 
-  await fetch(`/api/pedidos/${pedido.id}/estado`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ estado: 'entregado' }),
-  });
+  await fetch(`/api/pedidos/${pedido.id}/finalizar`, { method: 'PATCH' });
 
   cerrarOverlayPedido();
 }
