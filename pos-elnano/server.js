@@ -19,7 +19,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || 'cambia-esto-en-railway-por
 const POS_PASSWORD = process.env.POS_PASSWORD; // PIN maestro de arranque, solo sirve mientras no haya ningún empleado dado de alta
 
 function firmarSesion(empleado) {
-  const payload = JSON.stringify({ id: empleado.id, nombre: empleado.nombre, puesto: empleado.puesto });
+  const payload = JSON.stringify({ id: empleado.id, nombre: empleado.nombre, puesto: empleado.puesto, sucursal_id: empleado.sucursal_id ?? null });
   const payloadB64 = Buffer.from(payload).toString('base64');
   const firma = crypto.createHmac('sha256', SESSION_SECRET).update(payloadB64).digest('hex');
   return `${payloadB64}.${firma}`;
@@ -70,6 +70,18 @@ function requierePuesto(...puestosPermitidos) {
   };
 }
 
+// Para acciones que reciben solo el ID de un pedido (cobrar, cancelar, finalizar, etc.):
+// verifica que ese pedido sea de la sucursal asignada al empleado.
+async function verificarSucursalDelPedido(req, res, next) {
+  if (!req.empleado || !req.empleado.sucursal_id) return next(); // encargado, sin restricción
+  const { rows } = await pool.query('SELECT sucursal_id FROM pedidos WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
+  if (String(rows[0].sucursal_id) !== String(req.empleado.sucursal_id)) {
+    return res.status(403).json({ error: 'Este pedido no es de tu sucursal' });
+  }
+  next();
+}
+
 app.use('/login', express.static(path.join(__dirname, 'public/login')));
 
 app.post('/api/login', async (req, res) => {
@@ -94,7 +106,7 @@ app.post('/api/login', async (req, res) => {
     'Set-Cookie',
     `pos_session=${firmarSesion(empleado)}; HttpOnly; Path=/; Max-Age=${60 * 60 * 24 * 90}; SameSite=Lax; Secure`
   );
-  res.json({ ok: true, nombre: empleado.nombre, puesto: empleado.puesto });
+  res.json({ ok: true, nombre: empleado.nombre, puesto: empleado.puesto, sucursal_id: empleado.sucursal_id ?? null });
 });
 
 app.post('/api/logout', (req, res) => {
@@ -126,7 +138,18 @@ function esRutaApiPublica(req) {
 
 app.use((req, res, next) => {
   if (!req.path.startsWith('/api/') || esRutaApiPublica(req)) return next();
-  requiereLogin(req, res, next);
+  requiereLogin(req, res, (err) => {
+    if (err) return next(err);
+    // Si el empleado tiene una sola sucursal asignada, no puede pedir/mandar datos de otra
+    // (el encargado, sin sucursal_id asignado, no tiene esta restricción)
+    if (req.empleado && req.empleado.sucursal_id) {
+      const sucursalPedida = req.query.sucursal_id || req.body?.sucursal_id;
+      if (sucursalPedida && String(sucursalPedida) !== String(req.empleado.sucursal_id)) {
+        return res.status(403).json({ error: 'No tienes acceso a esa sucursal' });
+      }
+    }
+    next();
+  });
 });
 
 // Sirve las dos pantallas: /pos (toma de pedidos) y /kds (monitor de cocina)
@@ -1005,7 +1028,7 @@ app.delete('/api/recompensas/:id', requierePuesto(), async (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/pedidos/:id/canjear-recompensa', requierePuesto('cajero'), async (req, res) => {
+app.post('/api/pedidos/:id/canjear-recompensa', requierePuesto('cajero'), verificarSucursalDelPedido, async (req, res) => {
   const { id } = req.params;
   const { recompensa_id } = req.body;
 
@@ -1045,7 +1068,7 @@ app.post('/api/pedidos/:id/canjear-recompensa', requierePuesto('cajero'), async 
   res.json(pedidoCompleto);
 });
 
-app.post('/api/pedidos/:id/quitar-canje', requierePuesto('cajero'), async (req, res) => {
+app.post('/api/pedidos/:id/quitar-canje', requierePuesto('cajero'), verificarSucursalDelPedido, async (req, res) => {
   const { id } = req.params;
   const { rows: pedidoRows } = await pool.query('SELECT * FROM pedidos WHERE id = $1', [id]);
   const pedido = pedidoRows[0];
@@ -1070,19 +1093,19 @@ app.post('/api/pedidos/:id/quitar-canje', requierePuesto('cajero'), async (req, 
 
 // ---------- Empleados (solo el encargado los administra) ----------
 app.get('/api/empleados', requiereLogin, requierePuesto(), async (req, res) => {
-  const { rows } = await pool.query('SELECT id, nombre, puesto, pin, activo FROM empleados ORDER BY nombre');
+  const { rows } = await pool.query('SELECT id, nombre, puesto, pin, activo, sucursal_id FROM empleados ORDER BY nombre');
   res.json(rows);
 });
 
 app.post('/api/empleados', requiereLogin, requierePuesto(), async (req, res) => {
-  const { nombre, puesto, pin } = req.body;
+  const { nombre, puesto, pin, sucursal_id } = req.body;
   if (!nombre || !puesto || !pin) return res.status(400).json({ error: 'Faltan datos' });
   if (!/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'El PIN debe ser de 4 dígitos' });
   if (!['mesero', 'cajero', 'encargado'].includes(puesto)) return res.status(400).json({ error: 'Puesto inválido' });
   try {
     const { rows } = await pool.query(
-      'INSERT INTO empleados (nombre, puesto, pin) VALUES ($1,$2,$3) RETURNING id, nombre, puesto, pin, activo',
-      [nombre.trim(), puesto, pin]
+      'INSERT INTO empleados (nombre, puesto, pin, sucursal_id) VALUES ($1,$2,$3,$4) RETURNING id, nombre, puesto, pin, activo, sucursal_id',
+      [nombre.trim(), puesto, pin, sucursal_id || null]
     );
     res.json(rows[0]);
   } catch (err) {
@@ -1092,6 +1115,8 @@ app.post('/api/empleados', requiereLogin, requierePuesto(), async (req, res) => 
 
 app.patch('/api/empleados/:id', requiereLogin, requierePuesto(), async (req, res) => {
   const { nombre, puesto, pin, activo } = req.body;
+  const sucursalProvista = Object.prototype.hasOwnProperty.call(req.body, 'sucursal_id');
+  const sucursal_id = sucursalProvista ? req.body.sucursal_id || null : undefined;
   if (pin && !/^\d{4}$/.test(pin)) return res.status(400).json({ error: 'El PIN debe ser de 4 dígitos' });
   try {
     const { rows } = await pool.query(
@@ -1099,9 +1124,10 @@ app.patch('/api/empleados/:id', requiereLogin, requierePuesto(), async (req, res
          nombre = COALESCE($1, nombre),
          puesto = COALESCE($2, puesto),
          pin = COALESCE($3, pin),
-         activo = COALESCE($4, activo)
-       WHERE id = $5 RETURNING id, nombre, puesto, pin, activo`,
-      [nombre, puesto, pin, activo, req.params.id]
+         activo = COALESCE($4, activo),
+         sucursal_id = CASE WHEN $6 THEN $5 ELSE sucursal_id END
+       WHERE id = $7 RETURNING id, nombre, puesto, pin, activo, sucursal_id`,
+      [nombre, puesto, pin, activo, sucursal_id, sucursalProvista, req.params.id]
     );
     if (!rows.length) return res.status(404).json({ error: 'Empleado no encontrado' });
     res.json(rows[0]);
@@ -1467,7 +1493,7 @@ app.get('/api/pedidos', async (req, res) => {
   res.json(pedidos);
 });
 
-app.patch('/api/pedidos/:id/estado', async (req, res) => {
+app.patch('/api/pedidos/:id/estado', verificarSucursalDelPedido, async (req, res) => {
   const { id } = req.params;
   const { estado } = req.body;
 
@@ -1499,7 +1525,7 @@ app.patch('/api/pedidos/:id/estado', async (req, res) => {
 // Finaliza/cierra el pedido de verdad (ya no se puede editar ni cobrar de nuevo).
 // Es independiente del estado de cocina: un pedido puede seguir abierto en mesa
 // aunque la comida ya haya salido de cocina.
-app.patch('/api/pedidos/:id/finalizar', requierePuesto('cajero'), async (req, res) => {
+app.patch('/api/pedidos/:id/finalizar', requierePuesto('cajero'), verificarSucursalDelPedido, async (req, res) => {
   const { id } = req.params;
   await pool.query(`UPDATE pedido_items SET estado = 'entregado' WHERE pedido_id = $1 AND cancelado = false`, [id]);
   const { rows } = await pool.query(
@@ -1535,7 +1561,7 @@ app.get('/api/pedidos/:id', async (req, res) => {
 });
 
 // Cancela un pedido completo (esté pendiente o ya cobrado), por si se equivocan
-app.patch('/api/pedidos/:id/cancelar', requierePuesto('cajero'), async (req, res) => {
+app.patch('/api/pedidos/:id/cancelar', requierePuesto('cajero'), verificarSucursalDelPedido, async (req, res) => {
   const { id } = req.params;
 
   const { rows: pedidoRows } = await pool.query('SELECT * FROM pedidos WHERE id = $1', [id]);
@@ -1572,7 +1598,7 @@ app.patch('/api/pedidos/:id/cancelar', requierePuesto('cajero'), async (req, res
 });
 
 // Agrega un producto a un pedido que ya existe (para editar antes de cobrar)
-app.post('/api/pedidos/:id/items', async (req, res) => {
+app.post('/api/pedidos/:id/items', verificarSucursalDelPedido, async (req, res) => {
   const { id } = req.params;
   const { producto_id, cantidad, precio_unitario, opciones_seleccionadas, notas } = req.body;
   if (!producto_id || !cantidad || !precio_unitario) {
@@ -1640,7 +1666,7 @@ app.patch('/api/pedido_items/:id/cancelar', async (req, res) => {
   }
 });
 
-app.post('/api/pedidos/:id/pagos', requierePuesto('cajero'), async (req, res) => {
+app.post('/api/pedidos/:id/pagos', requierePuesto('cajero'), verificarSucursalDelPedido, async (req, res) => {
   const { id } = req.params;
   const { pagos } = req.body; // [{ metodo, monto, recibido }]
 

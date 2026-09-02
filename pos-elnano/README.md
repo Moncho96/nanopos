@@ -448,6 +448,304 @@ también le pregunta si confirma su dirección.
 No requiere ninguna migración de base de datos — solo sube `server.js`, `public/pos/index.html`
 y `public/pos/app.js` a GitHub.
 
+## 22. Corte de caja: ajuste automático por envíos pagados en efectivo
+
+Resuelve el desfase que mencionaste: cuando un domicilio se cobra por transferencia/tarjeta
+pero el repartidor se paga en efectivo, ahora el Corte lo calcula solo:
+
+- A **Efectivo** le resta ese envío (salió efectivo de la caja sin haber entrado efectivo por
+  ese pedido) → esto explica el "faltante" que veías.
+- A **Tarjeta/Transferencia** le suma ese mismo monto como "pendiente de traspasar" → esto
+  explica el "sobrante" en la cuenta.
+
+Aparece una columna nueva **"Ajuste envío"** en la tabla del corte (roja en Efectivo, verde en
+Tarjeta/Transferencia), y una nota amarilla abajo con el monto exacto que hay que traspasar de
+la cuenta a la caja para que ambos cuadren. El "Debe haber" y el Cuadre de caja ya usan este
+número ajustado automáticamente — así el conteo físico de efectivo va a coincidir con la
+realidad, en vez de marcarte una diferencia que en realidad no es un error.
+
+No requiere ninguna migración de base de datos — solo sube `server.js`, `public/pos/index.html`
+y `public/pos/app.js` a GitHub.
+
+## 23. Importar recetas en lote (CSV)
+
+Nueva pestaña **"📋 Importar recetas"** (menú ☰): sube un CSV para dar de alta las recetas de
+varios productos de un jalón, en vez de entrar producto por producto a Menú → 📋.
+
+**Columnas del CSV** (con encabezado, en este orden):
+
+```
+producto,insumo,unidad,cantidad,costo_unitario_insumo
+```
+
+- `producto`: debe coincidir exactamente con el nombre en tu Menú actual.
+- `insumo`: nombre del insumo. Si no existe todavía, se crea solo (con la unidad y costo que
+  pongas en esta misma fila).
+- `unidad`: solo se usa si el insumo es nuevo (kg, pza, l, etc.).
+- `cantidad`: cuánto de ese insumo gasta **1 pieza/unidad base** del producto (no la orden
+  completa — el multiplicador de variantes tipo "Orden" se sigue configurando aparte, en
+  Menú → 📋 de cada producto).
+- `costo_unitario_insumo`: opcional, para dar de alta o actualizar el costo del insumo.
+
+Si un producto necesita varios insumos (ej. un taco con tortilla + carne + salsa), pon una fila
+por cada insumo, repitiendo el mismo nombre de producto.
+
+Te dejo `plantilla-recetas.csv` con todos tus productos reales ya listados como punto de
+partida — los valores de insumo/cantidad/costo que traen algunos son solo **ejemplos
+ilustrativos**, tienes que corregirlos con tus cantidades y costos reales antes de subirlo (o
+puedes borrar esas filas y capturar las tuyas desde cero). Los productos que quedaron con las
+columnas vacías (Piratacos, Refresco, Frijoles, Costras, etc.) los dejé sin ejemplo porque no
+tengo referencia de su receta — agrégales tú las filas que necesiten.
+
+No requiere ninguna migración de base de datos — solo sube `server.js`, `public/pos/index.html`
+y `public/pos/app.js` a GitHub.
+
+## 24. Reparto de utilidades entre socios
+
+Nueva pestaña **"🤝 Reparto de utilidades"** (menú ☰): registras cada pago que le haces a cada
+socio (fecha, monto, método, nota), y arriba se ve el acumulado de cada quien con su porcentaje
+del total — para confirmar de un vistazo que van parejos en el 50/50 (o la proporción que
+manejen).
+
+Esto es aparte de "Gastos" a propósito: un reparto de utilidad no es un gasto del negocio, es
+la salida de la utilidad ya generada hacia cada socio, así que no afecta el corte de caja ni las
+ventas — es un registro independiente, solo para llevar cuentas claras entre ustedes.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-distribuciones.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/index.html`, `public/pos/app.js`.
+
+## 25. Catálogo de clientes + autocompletado por teléfono
+
+Nueva pestaña **"👥 Clientes"** (menú ☰): lista todos los clientes que se han registrado (se
+guardan solos cada vez que alguien da su teléfono al ordenar), con buscador por nombre,
+teléfono o colonia, y edición/borrado directo ahí.
+
+**Lo más útil de esto no es la lista en sí, sino esto:** al tomar un pedido nuevo, en cuanto
+escribes un teléfono que ya está registrado, el sistema **autocompleta solo** el nombre y la
+dirección/colonia del cliente — aparece un aviso "👤 Cliente conocido — datos completados" para
+que sepas que pasó. Ya no hay que volver a preguntar los datos a clientes frecuentes.
+
+Para activar esto no hace falta ninguna migración — la tabla de clientes ya existía. Solo sube
+`server.js`, `public/pos/index.html` y `public/pos/app.js` a GitHub.
+
+## 26. Cronómetro por pedido y tiempo promedio en cocina
+
+En el KDS, cada ticket ahora trae un **cronómetro en vivo** (arriba a la derecha, junto al
+número de pedido) que cuenta desde que se creó el pedido — verde los primeros 10 minutos,
+amarillo de 10 a 15, y rojo pasado eso (ajustable en `app.js`, constantes
+`UMBRAL_AMARILLO_MIN` / `UMBRAL_ROJO_MIN`). En cuanto se marca "listo", el cronómetro se
+congela mostrando cuánto tardó en total.
+
+Arriba de las columnas aparece una barra con el **tiempo promedio del día** — calculado con
+los pedidos que ya se marcaron listos hoy, se actualiza solo cada minuto (y al instante cuando
+se marca un pedido nuevo como listo).
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-tiempos-cocina.sql`.
+3. Sube a GitHub: `server.js`, `public/kds/index.html`, `public/kds/app.js`.
+
+Nota: el promedio solo cuenta pedidos marcados como "listo" — los que llevas capturando desde
+antes de esta actualización no tienen esa marca de tiempo, así que el promedio empieza a
+calcularse desde que actives esto.
+
+## 27. Ajustes tras el primer día real: categorías/variantes editables, WhatsApp completo, y pagar sin cerrar el pedido
+
+**Menú → Productos**: ahora hay una tabla de categorías arriba de los productos, con editar
+(nombre) y borrar (bloquea si todavía hay productos usándola, para no dejar productos huérfanos).
+
+**Menú → 📋 de cada producto** (ahora dice "Receta y variantes"): cada grupo de variantes/extras
+trae nombre y precio editables por opción, botón para borrar cada opción, botón para borrar el
+grupo completo, un mini-formulario para agregar una opción nueva a un grupo existente, y otro
+para crear un grupo nuevo desde cero (con su tipo variante/extra y si es obligatorio).
+
+**Mensaje de WhatsApp**: ahora trae una estructura fija arriba — nombre, teléfono, dirección (si
+es domicilio) y tipo de pedido — antes de la lista de productos y el total.
+
+**Pagar sin cerrar el pedido**: ya puedes cobrar un pedido (parcial o completo) y seguir
+agregándole productos después — el pedido ya no se bloquea al cobrarse, solo se bloquea cuando
+se marca como **entregado** en cocina. Si agregas algo después de cobrar y el total ya no
+alcanza con lo pagado, el pedido regresa solo a "Por cobrar", y al tocar "Pago" otra vez te deja
+completar justo lo que falta (no te vuelve a cobrar todo desde cero). En la lista principal ahora
+se ven dos etiquetas por pedido: una de pago (✅/⏳) y otra de cocina (🟡🔵🟢), para saber de un
+vistazo qué le falta a cada uno.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"** (o Console si te marca el error de
+   `LIMIT`, ya sabes cómo es).
+2. No requiere migración nueva — todos los cambios usan tablas y columnas que ya existían.
+3. Sube a GitHub: `server.js`, `public/pos/index.html`, `public/pos/app.js`.
+
+## 28. Cocina: agregar productos a un pedido ya entregado
+
+Corrige el bug donde, si agregabas un producto a un pedido de mesa después de que ya se había
+entregado todo lo demás, el producto nuevo se quedaba escondido junto con lo viejo en la columna
+"Entregado" — la cocina nunca se enteraba de que había algo nuevo por preparar.
+
+Ahora, al agregar un producto a un pedido que ya estaba "Listo" o "Entregado":
+- El pedido se **reabre solo** y vuelve a aparecer en la columna "Recibido" (con sonido de aviso).
+- El ticket muestra **solo lo nuevo** — los productos que ya se habían entregado no se repiten.
+- Aparece una etiqueta amarilla "🔄 Se agregó algo nuevo a este pedido" para que la cocina sepa
+  que es una mesa que ya había recibido parte de su comida.
+
+No requiere ninguna migración de base de datos — usa una columna que ya existía
+(`pedido_items.estado`) pero que nunca se había aprovechado. Solo sube `server.js`,
+`public/kds/app.js` a GitHub.
+
+## 29. Sistema de reseñas, con filtro hacia Google Maps
+
+Nueva página pública **`/resena`** — mandas a un cliente su link personal, califica de 1 a 5
+estrellas y deja un comentario opcional. Si califica con **4 o 5 estrellas**, le aparece un botón
+para compartir la misma reseña en Google Maps; si califica 1-3, solo se queda contigo (para que
+puedas atender la queja en privado, sin que se vuelva pública).
+
+**Cómo mandarlo:** dentro de cualquier pedido ya cobrado con teléfono registrado, aparece el
+botón "⭐ Pedir reseña" — genera un link único para ese pedido y abre WhatsApp con el mensaje ya
+armado, listo para mandar.
+
+**Panel "⭐ Reseñas"** (menú ☰): pega el link de "Escribir una reseña" de tu ficha de Google Maps
+de cada sucursal (lo sacas desde tu perfil de Google Business, opción "Pedir reseñas"), para que
+el botón de 4-5 estrellas funcione. Abajo se ve el promedio y cada reseña individual.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-resenas.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/index.html`, `public/pos/app.js`, y la carpeta nueva
+   `public/resena/` completa.
+
+## 30. Sistema de lealtad: puntos y recompensas editables
+
+Por cada **$10 de compra** (sin contar envío) en un pedido pagado con teléfono registrado, el
+cliente gana **1 punto** automático — sin que nadie tenga que hacer nada. Si el pedido se cancela
+o deja de estar cubierto (por ejemplo, se agregó algo después de cobrar), los puntos se ajustan
+o se quitan solos.
+
+**Panel "🎁 Lealtad"** (menú ☰): defines las recompensas — nombre, cuántos puntos cuesta, y
+cuánto descuento da (ej. "Descuento de $50" por 100 puntos). Se pueden editar, desactivar o
+borrar en cualquier momento; ya vienen 2 de ejemplo para empezar.
+
+**Al editar un pedido con cliente registrado**, aparece su saldo de puntos y un botón
+"🎁 Canjear puntos" — solo se muestran las recompensas que el cliente ya puede pagar con lo que
+tiene acumulado. El descuento se aplica directo al total del pedido (se ve desglosado, como el
+envío), y se puede quitar el canje si fue un error (regresa los puntos al cliente).
+
+El catálogo de **Clientes** ahora también muestra cuántos puntos tiene cada quien.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-lealtad.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/index.html`, `public/pos/app.js`.
+
+## 31. Corrección: "Entregado" (cocina) ya no bloquea cobrar/editar el pedido
+
+Eran la misma cosa por error: cuando cocina marcaba un pedido como "Entregado", el POS lo
+bloqueaba por completo — impidiendo cobrarlo o agregarle algo, aunque la mesa siguiera abierta.
+Ahora son dos cosas independientes:
+
+- **Estado de cocina** (Recibido/En preparación/Listo/Entregado): solo dice si la comida ya
+  salió de cocina. Ya no bloquea nada en el POS.
+- **Finalizado**: se marca únicamente con el botón "✅ Finalizar pedido" — hasta ese momento el
+  pedido se puede seguir editando y cobrando sin importar qué tan avanzado esté en cocina.
+
+La pantalla principal ahora muestra pedidos pendientes hasta que se **finalicen** (no hasta que
+salgan de cocina), y cada fila trae la etiqueta de cocina siempre visible (incluido "✅
+Entregado") junto a la de cobro, para que sepas de un vistazo en qué va cada uno.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-finalizado.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/app.js`.
+
+## 32. Seguridad: contraseña compartida para el personal
+
+Ya no cualquiera con el link puede entrar a `/pos` o `/kds`, ni tocar los endpoints
+administrativos (menú, inventario, corte, clientes, etc.) — ahora piden una contraseña
+compartida antes de dejar entrar.
+
+**Lo que sigue público a propósito** (los clientes no deben necesitar contraseña):
+- `/pedir` — para que tus clientes hagan pedidos
+- `/resena` — para que dejen su reseña
+- El webhook de DiDi (`/api/didi/webhook`)
+
+**Cómo se activa:**
+
+1. En Railway, ve al servicio de tu **código** → pestaña **"Variables"**.
+2. Agrega una variable nueva: `POS_PASSWORD` con la contraseña que quieras usar (compártela
+   solo con tu personal de confianza).
+3. También agrega `SESSION_SECRET` con cualquier texto largo y aleatorio (por ejemplo, genera
+   uno en [randomkeygen.com](https://randomkeygen.com) y pega cualquiera de las opciones) — esto
+   es solo para que la sesión sea segura, no necesitas recordarlo.
+4. Sube a GitHub: `server.js`, `public/pos/index.html`, `public/pos/app.js`, y la carpeta nueva
+   `public/login/` completa.
+5. En cuanto Railway redespliegue, entra a `/pos` — te va a mandar a una pantalla de login. Pon
+   la contraseña que configuraste en `POS_PASSWORD` y ya queda guardada en esa tablet por 90
+   días (no hay que volver a escribirla cada vez que abren la app).
+
+**Para cerrar sesión** (por ejemplo, si cambias la contraseña o alguien deja de trabajar ahí):
+menú ☰ → "🚪 Cerrar sesión", al final del todo.
+
+**Nota importante:** esto es una contraseña **compartida** para todo el personal — no sabe
+quién exactamente hizo cada acción. Si más adelante quieres un PIN por cada empleado (para saber
+quién canceló qué pedido, por ejemplo), es un paso natural desde aquí y usamos la misma base que
+ya construimos hoy.
+
+## 33. Empleados con PIN y permisos por puesto
+
+Reemplaza la contraseña compartida por un **PIN de 4 dígitos por empleado**, con 3 puestos:
+
+- **Mesero**: toma y edita pedidos (agregar/quitar productos), nada más.
+- **Cajero**: todo lo del mesero, más cobrar, cancelar pedido completo, finalizar pedido,
+  canjear puntos de lealtad, y el corte de caja (ver y cerrar).
+- **Encargado**: acceso total — Menú (productos/insumos/recetas/variantes), inventario, compras,
+  reportes, reparto de utilidades, configuración de envíos/Google/lealtad, y el panel de
+  Empleados.
+
+El menú lateral se acomoda solo según el puesto de quien entró — un mesero ni siquiera ve los
+botones de las secciones que no le tocan. Los botones del ticket (Pago, Cancelar, Finalizar,
+Cambiar método, Canjear puntos) también se esconden para mesero. Por seguridad, todo esto
+también está bloqueado del lado del servidor (no solo escondido en pantalla) — aunque alguien
+intente llamar a esos endpoints directamente, el servidor los rechaza si el puesto no tiene
+permiso.
+
+**Cómo entrar por primera vez (arranque):** mientras no hayas dado de alta ningún empleado
+todavía, puedes entrar con el PIN maestro — que es el mismo valor que pongas en la variable
+`POS_PASSWORD` de Railway (la que ya tenías configurada de la contraseña compartida anterior).
+Entra con eso, ve a menú ☰ → "🧑‍💼 Empleados" (visible porque entraste como encargado), da de
+alta a tu personal real con sus PINs, y de ahí en adelante cada quien entra con el suyo.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-empleados.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/index.html`, `public/pos/app.js`, `public/login/index.html`, `public/login/app.js`.
+
+## 34. Acceso por sucursal, por empleado
+
+En Empleados, ahora cada quien también tiene una **sucursal asignada** (o "Todas", pensado
+para el encargado). Si un empleado tiene una sucursal fija:
+
+- El selector de sucursal en `/pos` y `/kds` se le bloquea, ya fijo en la suya — ni puede
+  cambiarlo ni ver pedidos de la otra sucursal en las listas.
+- El servidor también lo bloquea si intenta forzar una llamada a la otra sucursal (cobrar,
+  cancelar, ver reportes, etc.) — no es solo un candado visual.
+- El encargado (sin sucursal asignada) sigue viendo y accediendo a ambas, como antes.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-empleados-sucursal.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/index.html`, `public/pos/app.js`, `public/kds/app.js`.
+4. En menú ☰ → "🧑‍💼 Empleados", edita a cada quien y asígnale su sucursal (o déjala en
+   "Todas" si de verdad necesita ver ambas).
+
 ## Estructura del proyecto
 
 ```
