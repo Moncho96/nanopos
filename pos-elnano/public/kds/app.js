@@ -15,6 +15,7 @@ function normalizarSlug(nombre) {
 }
 
 async function cargarSucursales() {
+  const empleado = await fetch('/api/me').then((r) => (r.ok ? r.json() : null));
   const sucursales = await fetch('/api/sucursales').then((r) => r.json());
   const select = document.getElementById('sucursal-select');
   select.innerHTML = sucursales.map((s) => `<option value="${s.id}">${s.nombre}</option>`).join('');
@@ -26,6 +27,12 @@ async function cargarSucursales() {
       (s) => normalizarSlug(s.nombre) === sucursalParam.toLowerCase() || String(s.id) === sucursalParam
     );
     if (encontrada) select.value = encontrada.id;
+  }
+
+  if (empleado?.sucursal_id) {
+    select.value = empleado.sucursal_id;
+    select.disabled = true;
+    select.title = 'Tu acceso está limitado a esta sucursal';
   }
 
   sucursalId = Number(select.value);
