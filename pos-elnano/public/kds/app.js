@@ -5,16 +5,40 @@ const socket = io();
 const UMBRAL_AMARILLO_MIN = 10;
 const UMBRAL_ROJO_MIN = 15;
 
+function normalizarSlug(nombre) {
+  return nombre
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/(^-|-$)/g, '');
+}
+
 async function cargarSucursales() {
   const sucursales = await fetch('/api/sucursales').then((r) => r.json());
   const select = document.getElementById('sucursal-select');
   select.innerHTML = sucursales.map((s) => `<option value="${s.id}">${s.nombre}</option>`).join('');
+
+  const params = new URLSearchParams(window.location.search);
+  const sucursalParam = params.get('sucursal');
+  if (sucursalParam) {
+    const encontrada = sucursales.find(
+      (s) => normalizarSlug(s.nombre) === sucursalParam.toLowerCase() || String(s.id) === sucursalParam
+    );
+    if (encontrada) select.value = encontrada.id;
+  }
+
   sucursalId = Number(select.value);
   select.addEventListener('change', () => {
     sucursalId = Number(select.value);
     socket.emit('join_sucursal', sucursalId);
     cargarPedidos();
     cargarPromedio();
+  });
+  document.getElementById('btn-ir-pos').addEventListener('click', () => {
+    const sucursalActual = sucursales.find((s) => s.id === sucursalId);
+    const slug = sucursalActual ? normalizarSlug(sucursalActual.nombre) : '';
+    window.location.href = slug ? `/pos?sucursal=${slug}` : '/pos';
   });
   socket.emit('join_sucursal', sucursalId);
   cargarPedidos();
