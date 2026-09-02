@@ -184,6 +184,19 @@
   .tabla-simple .num { text-align: right; }
   .tabla-simple .btn-eliminar-fila { background: none; border: none; color: #b8232f; cursor: pointer; font-size: 16px; }
   .resumen-total { display: flex; justify-content: space-between; padding: 14px 16px; margin: 0 12px 16px; background: white; border-radius: 10px; font-size: 16px; font-weight: bold; }
+  .chip-fecha { padding: 8px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; font-size: 13px; cursor: pointer; }
+  .chip-fecha.activo { background: #b8232f; color: white; border-color: #b8232f; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 14px 0; }
+  .kpi-card { background: white; border-radius: 12px; padding: 14px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .kpi-card .valor { font-size: 22px; font-weight: bold; color: #b8232f; }
+  .kpi-card .etiqueta { font-size: 12px; color: #888; margin-top: 4px; }
+  .informes-seccion { background: white; border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .informes-seccion h3 { margin: 0 0 12px; font-size: 15px; }
+  .barra-fila { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
+  .barra-fila .etiqueta-barra { width: 110px; flex-shrink: 0; color: #555; }
+  .barra-fondo { flex: 1; background: #f0f0f0; border-radius: 6px; height: 22px; position: relative; overflow: hidden; }
+  .barra-relleno { background: #b8232f; height: 100%; border-radius: 6px; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; }
+  .barra-relleno span { color: white; font-size: 11px; font-weight: bold; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -288,6 +301,7 @@
     <button class="item" id="btn-abrir-importar-recetas">📋 Importar recetas</button>
     <button class="item" id="btn-abrir-menu-admin">🍽️ Menú (productos e insumos)</button>
     <button class="item" id="btn-abrir-historial">🕓 Historial de pedidos</button>
+    <button class="item" id="btn-abrir-informes">📈 Informes</button>
     <button class="item" id="btn-abrir-corte">📊 Corte de caja</button>
     <button class="item" id="btn-abrir-envios">🚚 Envíos por colonia</button>
     <button class="item" id="btn-abrir-empleados">🧑‍💼 Empleados</button>
@@ -341,6 +355,25 @@
 
   <h3 style="padding:0 12px">Compras anteriores</h3>
   <div id="historial-compras" style="padding:0 12px 24px"></div>
+</div>
+
+<!-- Informes -->
+<div class="full-overlay" id="overlay-informes">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-informes">✕</button>
+    <span class="titulo">Informes</span>
+  </div>
+
+  <div class="form-inline" style="flex-wrap:wrap">
+    <button class="chip-fecha" data-preset="hoy">Hoy</button>
+    <button class="chip-fecha" data-preset="semana">Esta semana</button>
+    <button class="chip-fecha" data-preset="mes">Este mes</button>
+    <input type="date" id="informes-desde" />
+    <input type="date" id="informes-hasta" />
+    <button id="btn-consultar-informes">Consultar</button>
+  </div>
+
+  <div id="informes-contenido" style="padding:0 12px 32px"></div>
 </div>
 
 <!-- Empleados -->

@@ -1428,6 +1428,162 @@ document.getElementById('btn-cerrar-sesion').addEventListener('click', async () 
 
 cargarInicial();
 
+// ==================== INFORMES ====================
+
+document.getElementById('btn-abrir-informes').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-informes').classList.add('abierto');
+  if (!document.getElementById('informes-desde').value) aplicarPresetFecha('hoy');
+  else cargarInformes();
+});
+document.getElementById('btn-cerrar-informes').addEventListener('click', () => document.getElementById('overlay-informes').classList.remove('abierto'));
+document.getElementById('btn-consultar-informes').addEventListener('click', cargarInformes);
+
+document.querySelectorAll('.chip-fecha').forEach((btn) => {
+  btn.addEventListener('click', () => aplicarPresetFecha(btn.dataset.preset));
+});
+
+function aplicarPresetFecha(preset) {
+  document.querySelectorAll('.chip-fecha').forEach((b) => b.classList.toggle('activo', b.dataset.preset === preset));
+  const hoy = new Date();
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  let desde = new Date(hoy);
+  const hasta = fmt(hoy);
+
+  if (preset === 'semana') desde.setDate(hoy.getDate() - hoy.getDay());
+  else if (preset === 'mes') desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  // 'hoy' se queda igual a hoy
+
+  document.getElementById('informes-desde').value = fmt(desde);
+  document.getElementById('informes-hasta').value = hasta;
+  cargarInformes();
+}
+
+const TIPO_LABELS_INFORMES = { mesa: 'Mesa', para_llevar: 'Para llevar', domicilio: 'Domicilio' };
+const MESES_CORTOS = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+
+function formatearFechaCorta(fechaStr) {
+  const [y, m, d] = String(fechaStr).slice(0, 10).split('-');
+  return `${d} ${MESES_CORTOS[Number(m) - 1]}`;
+}
+
+async function cargarInformes() {
+  const desde = document.getElementById('informes-desde').value;
+  const hasta = document.getElementById('informes-hasta').value;
+  const sucursalId = document.getElementById('sucursal-select').value;
+  const cont = document.getElementById('informes-contenido');
+  if (!desde || !hasta) return;
+
+  cont.innerHTML = '<p style="color:#999;text-align:center;padding:20px">Cargando...</p>';
+
+  const resp = await fetch(`/api/informes?sucursal_id=${sucursalId}&fecha_desde=${desde}&fecha_hasta=${hasta}`);
+  if (!resp.ok) {
+    const err = await resp.json();
+    cont.innerHTML = `<p style="color:#b8232f;text-align:center;padding:20px">${err.error || 'No se pudo cargar'}</p>`;
+    return;
+  }
+  const d = await resp.json();
+
+  const maxDia = Math.max(1, ...d.porDia.map((r) => r.total));
+  const maxMetodo = Math.max(1, ...d.porMetodo.map((r) => r.total));
+  const maxTipo = Math.max(1, ...d.porTipo.map((r) => r.total));
+  const maxProducto = Math.max(1, ...d.topProductos.map((r) => r.cantidad));
+
+  cont.innerHTML = `
+    <div class="kpi-grid">
+      <div class="kpi-card"><div class="valor">$${d.ventas.toFixed(0)}</div><div class="etiqueta">Ventas</div></div>
+      <div class="kpi-card"><div class="valor">${d.pedidos}</div><div class="etiqueta">Pedidos cobrados</div></div>
+      <div class="kpi-card"><div class="valor">$${d.ticketPromedio.toFixed(0)}</div><div class="etiqueta">Ticket promedio</div></div>
+      <div class="kpi-card"><div class="valor">${d.porcentajeCancelados}%</div><div class="etiqueta">Cancelados (${d.pedidosCancelados})</div></div>
+      <div class="kpi-card"><div class="valor">${d.tiempoPromedioCocinaMin ?? '—'}${d.tiempoPromedioCocinaMin ? ' min' : ''}</div><div class="etiqueta">Tiempo en cocina</div></div>
+      <div class="kpi-card"><div class="valor">${d.resenaPromedio ?? '—'}${d.resenaPromedio ? ' ⭐' : ''}</div><div class="etiqueta">Reseñas (${d.resenaCantidad})</div></div>
+    </div>
+
+    <div class="informes-seccion">
+      <h3>💰 Resumen financiero</h3>
+      <div style="font-size:14px;line-height:2">
+        <div style="display:flex;justify-content:space-between"><span>Ventas</span><strong>$${d.ventas.toFixed(2)}</strong></div>
+        <div style="display:flex;justify-content:space-between;color:#666"><span>− Gastos registrados</span><span>$${d.gastos.toFixed(2)}</span></div>
+        <div style="display:flex;justify-content:space-between;color:#666"><span>− Descuentos por lealtad</span><span>$${d.descuentosLealtad.toFixed(2)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding-top:8px;margin-top:4px;border-top:1px solid #eee;font-weight:bold"><span>≈ Resultado del periodo</span><span>$${(d.ventas - d.gastos - d.descuentosLealtad).toFixed(2)}</span></div>
+      </div>
+      <div style="font-size:11px;color:#aaa;margin-top:8px">No incluye el costo de los insumos consumidos, solo ventas menos gastos registrados y descuentos.</div>
+    </div>
+
+    <div class="informes-seccion">
+      <h3>📅 Ventas por día</h3>
+      ${
+        d.porDia.length
+          ? d.porDia
+              .map(
+                (r) => `
+        <div class="barra-fila">
+          <span class="etiqueta-barra">${formatearFechaCorta(r.dia)}</span>
+          <div class="barra-fondo"><div class="barra-relleno" style="width:${(r.total / maxDia) * 100}%"><span>$${r.total.toFixed(0)}</span></div></div>
+        </div>`
+              )
+              .join('')
+          : '<p style="color:#999;font-size:13px">Sin ventas en este rango</p>'
+      }
+    </div>
+
+    <div class="informes-seccion">
+      <h3>💳 Ventas por método de pago</h3>
+      ${
+        d.porMetodo.length
+          ? d.porMetodo
+              .map(
+                (r) => `
+        <div class="barra-fila">
+          <span class="etiqueta-barra">${METODO_LABELS[r.metodo] || r.metodo}</span>
+          <div class="barra-fondo"><div class="barra-relleno" style="width:${(r.total / maxMetodo) * 100}%"><span>$${r.total.toFixed(0)}</span></div></div>
+        </div>`
+              )
+              .join('')
+          : '<p style="color:#999;font-size:13px">Sin datos</p>'
+      }
+    </div>
+
+    <div class="informes-seccion">
+      <h3>🧾 Ventas por tipo de pedido</h3>
+      ${
+        d.porTipo.length
+          ? d.porTipo
+              .map(
+                (r) => `
+        <div class="barra-fila">
+          <span class="etiqueta-barra">${TIPO_LABELS_INFORMES[r.tipo] || r.tipo} (${r.pedidos})</span>
+          <div class="barra-fondo"><div class="barra-relleno" style="width:${(r.total / maxTipo) * 100}%"><span>$${r.total.toFixed(0)}</span></div></div>
+        </div>`
+              )
+              .join('')
+          : '<p style="color:#999;font-size:13px">Sin datos</p>'
+      }
+    </div>
+
+    <div class="informes-seccion">
+      <h3>🏆 Top 10 productos más vendidos</h3>
+      ${
+        d.topProductos.length
+          ? d.topProductos
+              .map(
+                (r, i) => `
+        <div class="barra-fila">
+          <span class="etiqueta-barra">${i + 1}. ${escapeHtml(r.nombre)}</span>
+          <div class="barra-fondo"><div class="barra-relleno" style="width:${(r.cantidad / maxProducto) * 100}%"><span>${r.cantidad} · $${r.total.toFixed(0)}</span></div></div>
+        </div>`
+              )
+              .join('')
+          : '<p style="color:#999;font-size:13px">Sin ventas en este rango</p>'
+      }
+    </div>
+
+    <div class="informes-seccion">
+      <h3>👥 Clientes nuevos en el periodo</h3>
+      <div class="kpi-card" style="max-width:200px"><div class="valor">${d.clientesNuevos}</div><div class="etiqueta">Clientes nuevos (todas las sucursales)</div></div>
+    </div>`;
+}
+
 // ==================== PERMISOS SEGÚN PUESTO ====================
 
 const DRAWER_SOLO_ENCARGADO = [
@@ -1435,7 +1591,7 @@ const DRAWER_SOLO_ENCARGADO = [
   'btn-abrir-lealtad', 'btn-abrir-resenas', 'btn-abrir-reparto', 'btn-abrir-importar-recetas',
   'btn-abrir-menu-admin', 'btn-abrir-envios', 'btn-abrir-empleados',
 ];
-const DRAWER_CAJERO_O_ENCARGADO = ['btn-abrir-corte'];
+const DRAWER_CAJERO_O_ENCARGADO = ['btn-abrir-corte', 'btn-abrir-informes'];
 
 function aplicarPermisosUI() {
   const puesto = state.empleado?.puesto;
