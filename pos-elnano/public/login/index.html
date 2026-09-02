@@ -5,24 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
 <title>El Nano - Iniciar sesión</title>
 <style>
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body { font-family: system-ui, -apple-system, sans-serif; margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center; background: #f4f4f4; padding: 20px; }
-  .card { background: white; border-radius: 16px; padding: 36px 28px; max-width: 360px; width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,0.08); text-align: center; }
+  .card { background: white; border-radius: 16px; padding: 32px 24px; max-width: 340px; width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,0.08); text-align: center; }
   .card h1 { font-size: 22px; margin: 0 0 4px; }
-  .card p { color: #888; font-size: 13px; margin: 0 0 24px; }
-  input { width: 100%; padding: 14px; border-radius: 10px; border: 1px solid #ddd; font-size: 16px; margin-bottom: 14px; text-align: center; letter-spacing: 2px; }
-  button { width: 100%; padding: 14px; background: #b8232f; color: white; border: none; border-radius: 10px; font-size: 15px; font-weight: bold; cursor: pointer; }
-  button:disabled { background: #ccc; }
-  #status { color: #b8232f; font-size: 13px; margin-top: 12px; min-height: 18px; }
+  .card p { color: #888; font-size: 13px; margin: 0 0 20px; }
+  .puntos { display: flex; justify-content: center; gap: 12px; margin-bottom: 20px; }
+  .punto { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #ddd; }
+  .punto.lleno { background: #b8232f; border-color: #b8232f; }
+  .teclado { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .tecla { padding: 18px 0; font-size: 22px; border-radius: 12px; border: 1px solid #eee; background: #fafafa; cursor: pointer; font-weight: 600; }
+  .tecla:active { background: #eee; }
+  .tecla.borrar { font-size: 16px; color: #b8232f; }
+  #status { color: #b8232f; font-size: 13px; margin-top: 14px; min-height: 18px; }
 </style>
 </head>
 <body>
 
 <div class="card">
   <h1>🌮 El Nano</h1>
-  <p>Acceso solo para personal</p>
-  <input type="password" id="password" placeholder="Contraseña" autofocus />
-  <button id="btn-entrar">Entrar</button>
+  <p>Ingresa tu PIN de acceso</p>
+  <div class="puntos" id="puntos"></div>
+  <div class="teclado" id="teclado"></div>
   <div id="status"></div>
 </div>
 
