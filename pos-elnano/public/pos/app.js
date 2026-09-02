@@ -1400,6 +1400,12 @@ async function agregarEnvio() {
   cargarEnvios();
 }
 
+document.getElementById('btn-ir-kds').addEventListener('click', () => {
+  const sucursalActual = state.sucursales.find((s) => String(s.id) === document.getElementById('sucursal-select').value);
+  const slug = sucursalActual ? normalizarSlug(sucursalActual.nombre) : '';
+  window.location.href = slug ? `/kds?sucursal=${slug}` : '/kds';
+});
+
 document.getElementById('btn-cerrar-sesion').addEventListener('click', async () => {
   if (!confirm('¿Cerrar sesión?')) return;
   await fetch('/api/logout', { method: 'POST' });
