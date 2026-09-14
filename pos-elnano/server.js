@@ -1493,6 +1493,44 @@ app.get('/api/pedidos', async (req, res) => {
   res.json(pedidos);
 });
 
+// Cambia el tipo de un pedido ya creado (ej. dijo domicilio y al final pasa por él, o viceversa).
+// Si pasa a domicilio, calcula el costo de envío según la colonia; si deja de serlo, lo quita.
+app.patch('/api/pedidos/:id/tipo', verificarSucursalDelPedido, async (req, res) => {
+  const { id } = req.params;
+  const { tipo, colonia, direccion } = req.body;
+  if (!['mesa', 'para_llevar', 'domicilio'].includes(tipo)) {
+    return res.status(400).json({ error: 'Tipo de pedido inválido' });
+  }
+
+  const { rows: pedidoRows } = await pool.query('SELECT * FROM pedidos WHERE id = $1', [id]);
+  const pedido = pedidoRows[0];
+  if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+  if (pedido.finalizado) return res.status(400).json({ error: 'Este pedido ya fue finalizado, no se puede modificar' });
+  if (pedido.cancelado) return res.status(400).json({ error: 'Este pedido está cancelado' });
+
+  let costoEnvio = 0;
+  if (tipo === 'domicilio') {
+    if (!colonia) return res.status(400).json({ error: 'Falta la colonia para calcular el costo de envío' });
+    const { rows: envioRows } = await pool.query(
+      'SELECT costo FROM costos_envio WHERE sucursal_id = $1 AND colonia = $2',
+      [pedido.sucursal_id, colonia]
+    );
+    if (!envioRows.length) return res.status(400).json({ error: 'No hay costo de envío configurado para esa colonia' });
+    costoEnvio = Number(envioRows[0].costo);
+
+    if (pedido.cliente_id) {
+      await pool.query('UPDATE clientes SET colonia = $1, direccion = COALESCE($2, direccion) WHERE id = $3', [colonia, direccion || null, pedido.cliente_id]);
+    }
+  }
+
+  await pool.query('UPDATE pedidos SET tipo = $1, costo_envio = $2 WHERE id = $3', [tipo, costoEnvio, id]);
+  await recalcularTotalPedido(id);
+
+  const pedidoCompleto = await obtenerPedidoCompleto(id);
+  io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
+  res.json(pedidoCompleto);
+});
+
 app.patch('/api/pedidos/:id/estado', verificarSucursalDelPedido, async (req, res) => {
   const { id } = req.params;
   const { estado } = req.body;
