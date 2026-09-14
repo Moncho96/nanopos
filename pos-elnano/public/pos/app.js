@@ -325,6 +325,10 @@ async function abrirOverlayEditar(pedidoId) {
   btnPedirResena.style.display = pedido.cliente_telefono && pedido.pagado && !pedido.cancelado ? 'block' : 'none';
   btnPedirResena.onclick = () => pedirResena(pedido);
 
+  const btnCambiarTipo = document.getElementById('btn-cambiar-tipo');
+  btnCambiarTipo.style.display = !ticketState.soloLectura ? 'block' : 'none';
+  btnCambiarTipo.onclick = () => abrirModalCambiarTipo(pedido);
+
   const btnFinalizar = document.getElementById('btn-finalizar-pedido');
   btnFinalizar.style.display = !ticketState.soloLectura ? 'block' : 'none';
   btnFinalizar.onclick = () => finalizarPedido(pedido);
@@ -3486,6 +3490,85 @@ async function finalizarPedido(pedido) {
   await fetch(`/api/pedidos/${pedido.id}/finalizar`, { method: 'PATCH' });
 
   cerrarOverlayPedido();
+}
+
+async function abrirModalCambiarTipo(pedido) {
+  const envios = await fetch(`/api/envios?sucursal_id=${pedido.sucursal_id}`).then((r) => r.json());
+
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-tipo">
+      <div class="modal-box">
+        <h3>Cambiar tipo de pedido</h3>
+        <div style="font-size:13px;color:#888;margin-bottom:10px">Actual: ${TIPO_LABELS[pedido.tipo] || pedido.tipo}</div>
+        <div class="modal-grupo">
+          <div class="modal-opcion" data-tipo="mesa">🍽️ En el local (mesa)</div>
+          <div class="modal-opcion" data-tipo="para_llevar">🥡 Para llevar</div>
+          <div class="modal-opcion" data-tipo="domicilio">🛵 A domicilio</div>
+        </div>
+        <div id="tipo-campos-domicilio" style="display:none;margin-top:10px">
+          <select id="tipo-colonia-select" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;margin-bottom:8px">
+            <option value="">Selecciona colonia</option>
+            ${envios.map((e) => `<option value="${e.colonia}">${e.colonia} — $${Number(e.costo).toFixed(2)}</option>`).join('')}
+          </select>
+          <input type="text" id="tipo-direccion-input" placeholder="Dirección (calle, número, referencias)" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd" value="${pedido.cliente_direccion || ''}" />
+        </div>
+        <div id="tipo-status" style="color:#b8232f;font-size:13px;margin-top:8px"></div>
+        <div class="modal-botones" style="margin-top:14px">
+          <button class="btn-cancelar" id="btn-cerrar-tipo">Cancelar</button>
+          <button class="btn-agregar" id="btn-confirmar-tipo" disabled>Confirmar</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  let tipoElegido = null;
+
+  document.getElementById('modal-overlay-tipo').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-tipo') document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-cerrar-tipo').addEventListener('click', () => {
+    document.getElementById('modal-container').innerHTML = '';
+  });
+  document.querySelectorAll('#modal-overlay-tipo .modal-opcion').forEach((el) => {
+    el.addEventListener('click', () => {
+      tipoElegido = el.dataset.tipo;
+      document.querySelectorAll('#modal-overlay-tipo .modal-opcion').forEach((o) => o.classList.remove('selected'));
+      el.classList.add('selected');
+      document.getElementById('tipo-campos-domicilio').style.display = tipoElegido === 'domicilio' ? 'block' : 'none';
+      document.getElementById('btn-confirmar-tipo').disabled = false;
+    });
+  });
+  document.getElementById('btn-confirmar-tipo').addEventListener('click', async () => {
+    const statusEl = document.getElementById('tipo-status');
+    const colonia = document.getElementById('tipo-colonia-select').value;
+    const direccion = document.getElementById('tipo-direccion-input').value.trim();
+    if (tipoElegido === 'domicilio' && !colonia) {
+      statusEl.textContent = 'Elige la colonia para calcular el envío.';
+      return;
+    }
+    const resp = await fetch(`/api/pedidos/${pedido.id}/tipo`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tipo: tipoElegido, colonia, direccion }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      statusEl.textContent = err.error || 'No se pudo cambiar';
+      return;
+    }
+    document.getElementById('modal-container').innerHTML = '';
+    await refrescarPedidoEditando();
+    renderTicketPanel();
+    const pedidoActualizado = ticketState.pedidoData;
+    document.getElementById('overlay-titulo').textContent = `Pedido #${pedidoActualizado.numero_dia ?? pedidoActualizado.id}`;
+    const direccionEl = document.getElementById('ticket-direccion-display');
+    if (pedidoActualizado.cliente_direccion || pedidoActualizado.cliente_colonia) {
+      direccionEl.textContent = `📍 ${pedidoActualizado.cliente_direccion || ''}${pedidoActualizado.cliente_colonia ? ', ' + pedidoActualizado.cliente_colonia : ''}`;
+      direccionEl.style.display = 'block';
+    } else {
+      direccionEl.style.display = 'none';
+    }
+  });
 }
 
 async function pedirResena(pedido) {
