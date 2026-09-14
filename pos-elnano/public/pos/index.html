@@ -94,7 +94,7 @@
   @media (max-width: 850px) { .ticket-panel { width: 260px; } .cat-sidebar { width: 78px; } }
   .ticket-header { padding: 12px; border-bottom: 1px solid #eee; }
   .ticket-header input { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; margin-bottom: 6px; }
-  .ticket-items { flex: 1; overflow-y: auto; padding: 6px 12px; }
+  .ticket-items { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 12px; }
   .ticket-item { padding: 8px 0; border-bottom: 1px solid #f2f2f2; font-size: 13px; }
   .ticket-item-top { display: flex; justify-content: space-between; align-items: flex-start; }
   .ticket-item small { color: #999; }
@@ -130,7 +130,7 @@
     .cat-sidebar-item { flex: 0 0 auto; border-left: none; border-bottom: 3px solid transparent; padding: 10px 14px; white-space: nowrap; }
     .cat-sidebar-item.active { border-left: none; border-bottom-color: #b8232f; }
 
-    .ticket-panel { width: 100%; border-left: none; }
+    .ticket-panel { width: 100%; border-left: none; flex: 1; min-height: 0; }
 
     /* Por default se ve el ticket. El botón "+ Productos" cambia al catálogo */
     #cat-sidebar, .productos-area { display: none; }
