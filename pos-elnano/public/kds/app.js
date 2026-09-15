@@ -98,10 +98,13 @@ function renderTicket(pedido) {
       const detalle = opciones.length
         ? `<div style="font-size:12px;opacity:0.75;margin-left:12px">${opciones.map((o) => o.nombre).join(', ')}</div>`
         : '';
+      const nota = it.notas
+        ? `<div style="font-size:13px;font-weight:bold;color:#facc15;margin-left:12px">📝 ${it.notas}</div>`
+        : '';
       if (it.cancelado) {
         return `<div class="item" style="color:#ff5c5c;text-decoration:line-through"><span>${it.cantidad}x ${it.producto_nombre} (cancelado)</span></div>`;
       }
-      return `<div class="item"><span>${it.cantidad}x ${it.producto_nombre}</span></div>${detalle}`;
+      return `<div class="item"><span>${it.cantidad}x ${it.producto_nombre}</span></div>${detalle}${nota}`;
     })
     .join('');
 
