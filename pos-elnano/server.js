@@ -1141,6 +1141,35 @@ app.delete('/api/empleados/:id', requiereLogin, requierePuesto(), async (req, re
   res.json({ ok: true });
 });
 
+// ---------- Etiquetas rápidas de comentarios (por categoría) ----------
+app.get('/api/etiquetas', async (req, res) => {
+  const { categoria_id } = req.query;
+  const { rows } = await pool.query(
+    categoria_id
+      ? 'SELECT * FROM etiquetas_comentario WHERE categoria_id = $1 ORDER BY orden, id'
+      : 'SELECT * FROM etiquetas_comentario ORDER BY categoria_id, orden, id',
+    categoria_id ? [categoria_id] : []
+  );
+  res.json(rows);
+});
+
+app.post('/api/etiquetas', requierePuesto(), async (req, res) => {
+  const { categoria_id, texto } = req.body;
+  if (!categoria_id || !texto || !texto.trim()) return res.status(400).json({ error: 'Falta la categoría o el texto' });
+  const { rows } = await pool.query(
+    `INSERT INTO etiquetas_comentario (categoria_id, texto, orden)
+     VALUES ($1,$2, (SELECT COALESCE(MAX(orden),0)+1 FROM etiquetas_comentario WHERE categoria_id = $1))
+     RETURNING *`,
+    [categoria_id, texto.trim()]
+  );
+  res.json(rows[0]);
+});
+
+app.delete('/api/etiquetas/:id', requierePuesto(), async (req, res) => {
+  await pool.query('DELETE FROM etiquetas_comentario WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono, buscar } = req.query;
