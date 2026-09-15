@@ -501,26 +501,14 @@ function renderProductosOverlay() {
 function manejarClickProducto(productoId) {
   const producto = state.productos.find((p) => p.id === productoId);
   const grupos = producto.grupos_modificadores || [];
-
   const onAgregar = ticketState.modo === 'nuevo' ? agregarAlCarritoTicket : agregarItemAEditar;
-
-  if (grupos.length === 0) {
-    onAgregar({
-      producto_id: producto.id,
-      nombre: producto.nombre,
-      precio: Number(producto.precio),
-      cantidad: 1,
-      opciones_seleccionadas: [],
-    });
-  } else {
-    abrirModalModificadores(producto, grupos, onAgregar);
-  }
+  abrirModalModificadores(producto, grupos, onAgregar);
 }
 
 // ---------- Carrito local (modo "nuevo") ----------
 
 function agregarAlCarritoTicket(item) {
-  const clave = item.producto_id + '|' + JSON.stringify(item.opciones_seleccionadas);
+  const clave = item.producto_id + '|' + JSON.stringify(item.opciones_seleccionadas) + '|' + (item.notas || '');
   const existente = ticketState.carrito.find((it) => it._clave === clave);
   if (existente) existente.cantidad += item.cantidad;
   else ticketState.carrito.push({ ...item, _clave: clave });
@@ -547,6 +535,7 @@ async function agregarItemAEditar(item) {
       cantidad: item.cantidad,
       precio_unitario: item.precio,
       opciones_seleccionadas: item.opciones_seleccionadas,
+      notas: item.notas || null,
     }),
   });
   ticketState.pedidoData = await fetch(`/api/pedidos/${ticketState.pedidoId}`).then((r) => r.json());
@@ -583,7 +572,7 @@ function renderTicketPanel() {
           return `
         <div class="ticket-item">
           <div class="ticket-item-top">
-            <span>${it.cantidad}x ${it.nombre}${detalle ? `<br><small>${detalle}</small>` : ''}</span>
+            <span>${it.cantidad}x ${it.nombre}${detalle ? `<br><small>${detalle}</small>` : ''}${it.notas ? `<br><small style="color:#a97800">📝 ${escapeHtml(it.notas)}</small>` : ''}</span>
             <span>$${(it.precio * it.cantidad).toFixed(2)}<button data-clave="${it._clave}">×</button></span>
           </div>
         </div>`;
@@ -606,7 +595,7 @@ function renderTicketPanel() {
           return `
         <div class="ticket-item">
           <div class="ticket-item-top">
-            <span>${it.cantidad}x ${it.producto_nombre}${detalle ? `<br><small>${detalle}</small>` : ''}</span>
+            <span>${it.cantidad}x ${it.producto_nombre}${detalle ? `<br><small>${detalle}</small>` : ''}${it.notas ? `<br><small style="color:#a97800">📝 ${escapeHtml(it.notas)}</small>` : ''}</span>
             <span>$${(it.cantidad * it.precio_unitario).toFixed(2)}${
               ticketState.soloLectura ? '' : `<button data-item-id="${it.id}">×</button>`
             }</span>
@@ -790,6 +779,7 @@ async function crearPedidoDesdeTicket() {
     cantidad: it.cantidad,
     precio_unitario: it.precio,
     opciones_seleccionadas: it.opciones_seleccionadas,
+    notas: it.notas || null,
   }));
 
   statusEl.textContent = 'Enviando...';
@@ -823,12 +813,21 @@ document.getElementById('btn-volver-ticket').addEventListener('click', () => {
   document.querySelector('.overlay-body').classList.remove('vista-productos');
 });
 
-function abrirModalModificadores(producto, grupos, onAgregar) {
+const etiquetasCache = {};
+
+async function abrirModalModificadores(producto, grupos, onAgregar) {
   onAgregar =
     onAgregar ||
     function (item) {
       agregarAlCarritoTicket(item);
     };
+
+  if (!etiquetasCache[producto.categoria_id]) {
+    etiquetasCache[producto.categoria_id] = await fetch(`/api/etiquetas?categoria_id=${producto.categoria_id}`).then((r) => r.json());
+  }
+  const etiquetas = etiquetasCache[producto.categoria_id];
+  const etiquetasElegidas = new Set();
+  let comentarioLibre = '';
 
   const seleccion = {};
   grupos.forEach((g) => {
@@ -870,6 +869,18 @@ function abrirModalModificadores(producto, grupos, onAgregar) {
             </div>`
             )
             .join('')}
+          <div class="modal-grupo">
+              <div class="modal-grupo-titulo">Comentarios (opcional)</div>
+              ${etiquetas
+                .map(
+                  (et) => `
+                <div class="modal-opcion etiqueta-chip ${etiquetasElegidas.has(et.id) ? 'selected' : ''}" data-etiqueta="${et.id}">
+                  <span>${escapeHtml(et.texto)}</span>
+                </div>`
+                )
+                .join('')}
+              <input type="text" id="modal-comentario-libre" placeholder="Otro comentario..." value="${comentarioLibre}" style="width:100%;padding:9px;border-radius:8px;border:1px solid #ddd;margin-top:6px" />
+            </div>
           <div class="modal-cantidad">
             <button id="modal-menos">−</button>
             <span id="modal-cant" style="font-size:18px;min-width:24px;text-align:center">${cantidad}</span>
@@ -895,7 +906,19 @@ function abrirModalModificadores(producto, grupos, onAgregar) {
       cantidad += 1;
       render();
     });
-    document.querySelectorAll('.modal-opcion').forEach((el) => {
+    document.querySelectorAll('.etiqueta-chip').forEach((el) => {
+      el.addEventListener('click', () => {
+        const etId = Number(el.dataset.etiqueta);
+        comentarioLibre = document.getElementById('modal-comentario-libre').value; // no perder lo escrito
+        if (etiquetasElegidas.has(etId)) etiquetasElegidas.delete(etId);
+        else etiquetasElegidas.add(etId);
+        render();
+      });
+    });
+    document.getElementById('modal-comentario-libre').addEventListener('input', (e) => {
+      comentarioLibre = e.target.value;
+    });
+    document.querySelectorAll('.modal-opcion:not(.etiqueta-chip)').forEach((el) => {
       el.addEventListener('click', () => {
         const grupoId = Number(el.dataset.grupo);
         const opcionId = Number(el.dataset.opcion);
@@ -937,6 +960,12 @@ function abrirModalModificadores(producto, grupos, onAgregar) {
         precio: calcularPrecio(),
         cantidad,
         opciones_seleccionadas: opcionesElegidas,
+        notas:
+          [...etiquetasElegidas]
+            .map((id) => etiquetas.find((et) => et.id === id)?.texto)
+            .filter(Boolean)
+            .concat(document.getElementById('modal-comentario-libre').value.trim() ? [document.getElementById('modal-comentario-libre').value.trim()] : [])
+            .join(', ') || null,
       });
     });
   }
@@ -2757,6 +2786,61 @@ function renderSelectCategoriasAdmin() {
     .join('');
 }
 
+async function abrirModalEtiquetas(categoriaId, nombreCategoria) {
+  const etiquetas = await fetch(`/api/etiquetas?categoria_id=${categoriaId}`).then((r) => r.json());
+  delete etiquetasCache[categoriaId]; // invalida el caché usado al tomar pedidos, para que tome los cambios
+
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-etiquetas">
+      <div class="modal-box">
+        <h3>Etiquetas de "${escapeHtml(nombreCategoria)}"</h3>
+        <div style="font-size:12px;color:#888;margin-bottom:10px">Estas aparecen como opciones rápidas de comentario al agregar cualquier producto de esta categoría (ej. "Sin queso", "Poco aceite")</div>
+        <div id="etiquetas-lista">
+          ${
+            etiquetas
+              .map(
+                (et) => `
+            <div class="editar-item-row">
+              <span>${escapeHtml(et.texto)}</span>
+              <button data-borrar-etiqueta="${et.id}">×</button>
+            </div>`
+              )
+              .join('') || '<p style="color:#999;font-size:13px">Sin etiquetas todavía</p>'
+          }
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input type="text" id="nueva-etiqueta-texto" placeholder="Nueva etiqueta (ej. Sin cebolla)" style="flex:1;padding:9px;border-radius:8px;border:1px solid #ddd" />
+          <button class="btn-agregar" id="btn-agregar-etiqueta" style="padding:9px 14px;border-radius:8px;border:none">+ Agregar</button>
+        </div>
+        <button class="btn-cancelar-modal" id="btn-cerrar-etiquetas">Cerrar</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  document.getElementById('modal-overlay-etiquetas').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-etiquetas') document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-cerrar-etiquetas').addEventListener('click', () => {
+    document.getElementById('modal-container').innerHTML = '';
+  });
+  document.querySelectorAll('[data-borrar-etiqueta]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      await fetch(`/api/etiquetas/${btn.dataset.borrarEtiqueta}`, { method: 'DELETE' });
+      abrirModalEtiquetas(categoriaId, nombreCategoria);
+    });
+  });
+  document.getElementById('btn-agregar-etiqueta').addEventListener('click', async () => {
+    const texto = document.getElementById('nueva-etiqueta-texto').value.trim();
+    if (!texto) return;
+    await fetch('/api/etiquetas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ categoria_id: categoriaId, texto }),
+    });
+    abrirModalEtiquetas(categoriaId, nombreCategoria);
+  });
+}
+
 function renderCategoriasAdmin() {
   document.getElementById('categorias-admin-tabla-body').innerHTML = state.categorias
     .map(
@@ -2765,11 +2849,16 @@ function renderCategoriasAdmin() {
       <td><input type="text" class="categoria-nombre-edit" data-id="${c.id}" value="${c.nombre}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
       <td style="white-space:nowrap">
         <button class="btn-eliminar-fila" data-guardar-categoria="${c.id}" title="Guardar">💾</button>
+        <button class="btn-eliminar-fila" data-etiquetas-categoria="${c.id}" data-nombre="${c.nombre}" title="Etiquetas de comentarios">🏷️</button>
         <button class="btn-eliminar-fila" data-borrar-categoria="${c.id}" title="Borrar">🗑️</button>
       </td>
     </tr>`
     )
     .join('');
+
+  document.querySelectorAll('[data-etiquetas-categoria]').forEach((btn) => {
+    btn.addEventListener('click', () => abrirModalEtiquetas(Number(btn.dataset.etiquetasCategoria), btn.dataset.nombre));
+  });
 
   document.querySelectorAll('[data-guardar-categoria]').forEach((btn) => {
     btn.addEventListener('click', async () => {
