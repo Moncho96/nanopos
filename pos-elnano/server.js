@@ -174,8 +174,9 @@ io.on('connection', (socket) => {
 // ---------- Auxiliares ----------
 async function obtenerPedidoCompleto(pedidoId) {
   const { rows } = await pool.query(
-    `SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia, c.puntos AS cliente_puntos
-     FROM pedidos p LEFT JOIN clientes c ON c.id = p.cliente_id
+    `SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia, c.puntos AS cliente_puntos,
+            r.nombre AS repartidor_nombre, r.telefono AS repartidor_telefono
+     FROM pedidos p LEFT JOIN clientes c ON c.id = p.cliente_id LEFT JOIN repartidores r ON r.id = p.repartidor_id
      WHERE p.id = $1`,
     [pedidoId]
   );
@@ -1170,6 +1171,96 @@ app.delete('/api/etiquetas/:id', requierePuesto(), async (req, res) => {
   res.json({ ok: true });
 });
 
+// ---------- Repartidores y control de entregas a domicilio ----------
+app.get('/api/repartidores', async (req, res) => {
+  const { todos } = req.query;
+  const { rows } = await pool.query(
+    todos === 'true' ? 'SELECT * FROM repartidores ORDER BY nombre' : 'SELECT * FROM repartidores WHERE activo = true ORDER BY nombre'
+  );
+  res.json(rows);
+});
+
+app.post('/api/repartidores', requierePuesto('cajero'), async (req, res) => {
+  const { nombre, telefono } = req.body;
+  if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Falta el nombre' });
+  const { rows } = await pool.query(
+    'INSERT INTO repartidores (nombre, telefono) VALUES ($1,$2) RETURNING *',
+    [nombre.trim(), telefono || null]
+  );
+  res.json(rows[0]);
+});
+
+app.patch('/api/repartidores/:id', requierePuesto('cajero'), async (req, res) => {
+  const { nombre, telefono, activo } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE repartidores SET
+       nombre = COALESCE($1, nombre),
+       telefono = COALESCE($2, telefono),
+       activo = COALESCE($3, activo)
+     WHERE id = $4 RETURNING *`,
+    [nombre, telefono, activo, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Repartidor no encontrado' });
+  res.json(rows[0]);
+});
+
+app.delete('/api/repartidores/:id', requierePuesto('cajero'), async (req, res) => {
+  await pool.query('DELETE FROM repartidores WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// Asigna qué repartidor se lleva el pedido, y calcula el cambio si el cliente paga con billete grande
+app.patch('/api/pedidos/:id/asignar-repartidor', verificarSucursalDelPedido, async (req, res) => {
+  const { id } = req.params;
+  const { repartidor_id, monto_recibido_cliente } = req.body;
+  if (!repartidor_id) return res.status(400).json({ error: 'Falta el repartidor' });
+
+  const { rows: pedidoRows } = await pool.query('SELECT total FROM pedidos WHERE id = $1', [id]);
+  if (!pedidoRows.length) return res.status(404).json({ error: 'Pedido no encontrado' });
+  const total = Number(pedidoRows[0].total);
+
+  let cambio = null;
+  if (monto_recibido_cliente) {
+    cambio = Math.max(0, Number(monto_recibido_cliente) - total);
+  }
+
+  const { rows } = await pool.query(
+    `UPDATE pedidos SET repartidor_id = $1, asignado_en = now(), monto_recibido_cliente = $2, cambio_entregado = $3
+     WHERE id = $4 RETURNING *`,
+    [repartidor_id, monto_recibido_cliente || null, cambio, id]
+  );
+  const pedidoCompleto = await obtenerPedidoCompleto(id);
+  io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
+  res.json(pedidoCompleto);
+});
+
+// Marca que el repartidor ya regresó el dinero y, opcionalmente, registra el pago de su envío como gasto
+app.patch('/api/pedidos/:id/liquidar-entrega', requierePuesto('cajero'), verificarSucursalDelPedido, async (req, res) => {
+  const { id } = req.params;
+  const { registrar_gasto_envio } = req.body;
+
+  const { rows: pedidoRows } = await pool.query(
+    'SELECT p.*, r.nombre AS repartidor_nombre FROM pedidos p LEFT JOIN repartidores r ON r.id = p.repartidor_id WHERE p.id = $1',
+    [id]
+  );
+  const pedido = pedidoRows[0];
+  if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado' });
+  if (!pedido.repartidor_id) return res.status(400).json({ error: 'Este pedido no tiene repartidor asignado' });
+
+  await pool.query('UPDATE pedidos SET entrega_liquidada = true, liquidado_en = now() WHERE id = $1', [id]);
+
+  if (registrar_gasto_envio && Number(pedido.costo_envio) > 0) {
+    await pool.query(
+      `INSERT INTO gastos (sucursal_id, descripcion, monto, metodo_pago) VALUES ($1,$2,$3,'efectivo')`,
+      [pedido.sucursal_id, `Pago de envío a ${pedido.repartidor_nombre || 'repartidor'} — pedido #${pedido.numero_dia ?? pedido.id}`, pedido.costo_envio]
+    );
+  }
+
+  const pedidoCompleto = await obtenerPedidoCompleto(id);
+  io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
+  res.json(pedidoCompleto);
+});
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono, buscar } = req.query;
@@ -1464,9 +1555,11 @@ app.post('/api/pedidos', async (req, res) => {
 app.get('/api/pedidos', async (req, res) => {
   const { sucursal_id, estado, pagado, cancelado, fecha_desde, fecha_hasta, pendiente } = req.query;
   let query = `
-    SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia, c.puntos AS cliente_puntos
+    SELECT p.*, c.telefono AS cliente_telefono, c.direccion AS cliente_direccion, c.colonia AS cliente_colonia, c.puntos AS cliente_puntos,
+           r.nombre AS repartidor_nombre, r.telefono AS repartidor_telefono
     FROM pedidos p
     LEFT JOIN clientes c ON c.id = p.cliente_id
+    LEFT JOIN repartidores r ON r.id = p.repartidor_id
     WHERE 1=1`;
   const params = [];
   if (sucursal_id) {
