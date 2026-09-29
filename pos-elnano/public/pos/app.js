@@ -185,6 +185,10 @@ function renderPedidoRow(pedido) {
   const badgeCocina = !pedido.cancelado
     ? `<span class="badge" style="background:#eee;color:#555">${ESTADO_COCINA_LABEL[pedido.estado] || pedido.estado}</span>`
     : '';
+  const badgeRepartidor =
+    pedido.tipo === 'domicilio' && pedido.repartidor_nombre
+      ? `<span class="badge" style="background:${pedido.entrega_liquidada ? '#d4edda' : '#e7f3ff'};color:${pedido.entrega_liquidada ? '#1a7d3a' : '#0056b3'}">🛵 ${escapeHtml(pedido.repartidor_nombre)}${pedido.entrega_liquidada ? ' ✅' : ''}</span>`
+      : '';
 
   return `
     <div class="pedido-row" data-id="${pedido.id}">
@@ -204,7 +208,7 @@ function renderPedidoRow(pedido) {
       <div class="pedido-row-items">${itemsTexto}</div>
       <div class="pedido-row-bottom">
         <span class="pedido-row-total">$${Number(pedido.total).toFixed(2)}</span>
-        <span>${badgeCocina} ${badgeEstado}</span>
+        <span>${badgeRepartidor} ${badgeCocina} ${badgeEstado}</span>
       </div>
     </div>`;
 }
@@ -328,6 +332,8 @@ async function abrirOverlayEditar(pedidoId) {
   const btnCambiarTipo = document.getElementById('btn-cambiar-tipo');
   btnCambiarTipo.style.display = !ticketState.soloLectura ? 'block' : 'none';
   btnCambiarTipo.onclick = () => abrirModalCambiarTipo(pedido);
+
+  actualizarZonaEnvio(pedido);
 
   const btnFinalizar = document.getElementById('btn-finalizar-pedido');
   btnFinalizar.style.display = !ticketState.soloLectura ? 'block' : 'none';
@@ -814,6 +820,7 @@ document.getElementById('btn-volver-ticket').addEventListener('click', () => {
 });
 
 const etiquetasCache = {};
+let repartidoresCache = null;
 
 async function abrirModalModificadores(producto, grupos, onAgregar) {
   onAgregar =
@@ -1163,6 +1170,82 @@ document.getElementById('btn-abrir-resenas').addEventListener('click', () => {
   cargarResenas();
 });
 document.getElementById('btn-cerrar-resenas').addEventListener('click', () => document.getElementById('overlay-resenas').classList.remove('abierto'));
+
+document.getElementById('btn-abrir-repartidores').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-repartidores').classList.add('abierto');
+  cargarRepartidoresAdmin();
+});
+document.getElementById('btn-cerrar-repartidores').addEventListener('click', () => document.getElementById('overlay-repartidores').classList.remove('abierto'));
+
+document.getElementById('btn-agregar-repartidor').addEventListener('click', async () => {
+  const nombre = document.getElementById('nuevo-repartidor-nombre').value.trim();
+  const telefono = document.getElementById('nuevo-repartidor-telefono').value.trim();
+  if (!nombre) {
+    alert('Falta el nombre');
+    return;
+  }
+  await fetch('/api/repartidores', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nombre, telefono }),
+  });
+  document.getElementById('nuevo-repartidor-nombre').value = '';
+  document.getElementById('nuevo-repartidor-telefono').value = '';
+  cargarRepartidoresAdmin();
+});
+
+async function cargarRepartidoresAdmin() {
+  const repartidores = await fetch('/api/repartidores?todos=true').then((r) => r.json());
+  repartidoresCache = null; // invalida el caché usado en el ticket
+
+  document.getElementById('repartidores-tabla-body').innerHTML = repartidores
+    .map(
+      (r) => `
+    <tr style="opacity:${r.activo ? '1' : '0.5'}">
+      <td><input type="text" class="repartidor-nombre-edit" data-id="${r.id}" value="${r.nombre}" style="width:100%;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td><input type="text" class="repartidor-telefono-edit" data-id="${r.id}" value="${r.telefono || ''}" style="width:120px;padding:6px;border-radius:6px;border:1px solid #ddd" /></td>
+      <td style="white-space:nowrap">
+        <button class="btn-eliminar-fila" data-guardar-repartidor="${r.id}" title="Guardar">💾</button>
+        <button class="btn-eliminar-fila" data-toggle-repartidor="${r.id}" data-activo="${r.activo}" title="${r.activo ? 'Desactivar' : 'Activar'}">${r.activo ? '👁️' : '🚫'}</button>
+      </td>
+      <td><button class="btn-eliminar-fila" data-borrar-repartidor="${r.id}" title="Borrar">🗑️</button></td>
+    </tr>`
+    )
+    .join('') || '<tr><td colspan="4" style="text-align:center;color:#999">Sin repartidores todavía</td></tr>';
+
+  document.querySelectorAll('[data-guardar-repartidor]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.guardarRepartidor;
+      const nombre = document.querySelector(`.repartidor-nombre-edit[data-id="${id}"]`).value.trim();
+      const telefono = document.querySelector(`.repartidor-telefono-edit[data-id="${id}"]`).value.trim();
+      await fetch(`/api/repartidores/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre, telefono }),
+      });
+      cargarRepartidoresAdmin();
+    });
+  });
+  document.querySelectorAll('[data-toggle-repartidor]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const activo = btn.dataset.activo === 'true';
+      await fetch(`/api/repartidores/${btn.dataset.toggleRepartidor}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ activo: !activo }),
+      });
+      cargarRepartidoresAdmin();
+    });
+  });
+  document.querySelectorAll('[data-borrar-repartidor]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Borrar este repartidor?')) return;
+      await fetch(`/api/repartidores/${btn.dataset.borrarRepartidor}`, { method: 'DELETE' });
+      cargarRepartidoresAdmin();
+    });
+  });
+}
 
 document.getElementById('btn-abrir-clientes').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
@@ -1643,7 +1726,7 @@ const DRAWER_SOLO_ENCARGADO = [
   'btn-abrir-lealtad', 'btn-abrir-resenas', 'btn-abrir-reparto', 'btn-abrir-importar-recetas',
   'btn-abrir-menu-admin', 'btn-abrir-envios', 'btn-abrir-empleados',
 ];
-const DRAWER_CAJERO_O_ENCARGADO = ['btn-abrir-corte', 'btn-abrir-informes'];
+const DRAWER_CAJERO_O_ENCARGADO = ['btn-abrir-corte', 'btn-abrir-informes', 'btn-abrir-repartidores'];
 
 function aplicarPermisosUI() {
   const puesto = state.empleado?.puesto;
@@ -3581,6 +3664,104 @@ async function finalizarPedido(pedido) {
   cerrarOverlayPedido();
 }
 
+async function actualizarZonaEnvio(pedido) {
+  const cont = document.getElementById('ticket-envio-domicilio');
+  if (pedido.tipo !== 'domicilio' || pedido.cancelado) {
+    cont.style.display = 'none';
+    return;
+  }
+  cont.style.display = 'block';
+
+  const zonaSinAsignar = document.getElementById('envio-domicilio-sin-asignar');
+  const zonaAsignado = document.getElementById('envio-domicilio-asignado');
+
+  if (pedido.repartidor_id) {
+    zonaSinAsignar.style.display = 'none';
+    zonaAsignado.style.display = 'block';
+    const cambioTxt = pedido.cambio_entregado != null ? ` · cambio entregado: $${Number(pedido.cambio_entregado).toFixed(2)}` : '';
+    document.getElementById('envio-asignado-texto').innerHTML = pedido.entrega_liquidada
+      ? `✅ <strong>Liquidado</strong> — se lo llevó ${escapeHtml(pedido.repartidor_nombre || '')}${cambioTxt}`
+      : `🛵 Se lo llevó <strong>${escapeHtml(pedido.repartidor_nombre || '')}</strong>${cambioTxt} — sigue en la calle`;
+    const btnLiquidar = document.getElementById('btn-liquidar-entrega');
+    btnLiquidar.style.display = pedido.entrega_liquidada || ticketState.soloLectura || state.empleado?.puesto === 'mesero' ? 'none' : 'block';
+    btnLiquidar.onclick = async () => {
+      const registrarGasto = pedido.costo_envio > 0 ? confirm(`¿Registrar automáticamente un gasto de $${Number(pedido.costo_envio).toFixed(2)} por el pago del envío a ${pedido.repartidor_nombre}?`) : false;
+      await fetch(`/api/pedidos/${pedido.id}/liquidar-entrega`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ registrar_gasto_envio: registrarGasto }),
+      });
+      await refrescarPedidoEditando();
+      actualizarZonaEnvio(ticketState.pedidoData);
+    };
+    return;
+  }
+
+  zonaAsignado.style.display = 'none';
+  if (ticketState.soloLectura) {
+    zonaSinAsignar.style.display = 'none';
+    return;
+  }
+  zonaSinAsignar.style.display = 'block';
+
+  if (!repartidoresCache) {
+    repartidoresCache = await fetch('/api/repartidores').then((r) => r.json());
+  }
+  document.getElementById('envio-repartidor-select').innerHTML =
+    '<option value="">Elige repartidor</option>' + repartidoresCache.map((r) => `<option value="${r.id}">${r.nombre}</option>`).join('');
+
+  const pagaConInput = document.getElementById('envio-paga-con');
+  const cambioSpan = document.getElementById('envio-cambio-calculado');
+  pagaConInput.oninput = () => {
+    const monto = Number(pagaConInput.value) || 0;
+    const cambio = monto - Number(pedido.total);
+    cambioSpan.textContent = monto && cambio >= 0 ? `Cambio: $${cambio.toFixed(2)}` : '';
+  };
+
+  document.getElementById('btn-enviar-whatsapp-grupo').onclick = () => {
+    const mensaje = construirMensajeEnvioGrupo(pedido, Number(pagaConInput.value) || 0);
+    window.open(`https://wa.me/?text=${encodeURIComponent(mensaje)}`, '_blank');
+  };
+
+  document.getElementById('btn-asignar-repartidor').onclick = async () => {
+    const repartidorId = document.getElementById('envio-repartidor-select').value;
+    if (!repartidorId) {
+      alert('Elige un repartidor primero');
+      return;
+    }
+    await fetch(`/api/pedidos/${pedido.id}/asignar-repartidor`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repartidor_id: repartidorId, monto_recibido_cliente: Number(pagaConInput.value) || null }),
+    });
+    await refrescarPedidoEditando();
+    actualizarZonaEnvio(ticketState.pedidoData);
+  };
+}
+
+function construirMensajeEnvioGrupo(pedido, pagaCon) {
+  const itemsActivos = (pedido.items || []).filter((it) => !it.cancelado);
+  const itemsTexto = itemsActivos
+    .map((it) => {
+      const opciones = (it.opciones_seleccionadas || []).map((o) => o.nombre).join(', ');
+      const nota = it.notas ? ` [${it.notas}]` : '';
+      return `• ${it.cantidad}x ${it.producto_nombre}${opciones ? ` (${opciones})` : ''}${nota}`;
+    })
+    .join('\n');
+
+  let mensaje = `🛵 PEDIDO A DOMICILIO #${pedido.numero_dia ?? pedido.id}\n\n`;
+  mensaje += `👤 ${pedido.cliente_nombre || ''}\n`;
+  mensaje += `📞 ${pedido.cliente_telefono || ''}\n`;
+  mensaje += `📍 ${pedido.cliente_direccion || ''}${pedido.cliente_colonia ? ', ' + pedido.cliente_colonia : ''}\n\n`;
+  mensaje += `${itemsTexto}\n\n`;
+  mensaje += `Total: $${Number(pedido.total).toFixed(2)}`;
+  if (pagaCon > 0) {
+    const cambio = Math.max(0, pagaCon - Number(pedido.total));
+    mensaje += `\n💵 Paga con: $${pagaCon.toFixed(2)} — dar $${cambio.toFixed(2)} de cambio`;
+  }
+  return mensaje;
+}
+
 async function abrirModalCambiarTipo(pedido) {
   const envios = await fetch(`/api/envios?sucursal_id=${pedido.sucursal_id}`).then((r) => r.json());
 
@@ -3657,6 +3838,7 @@ async function abrirModalCambiarTipo(pedido) {
     } else {
       direccionEl.style.display = 'none';
     }
+    actualizarZonaEnvio(pedidoActualizado);
   });
 }
 

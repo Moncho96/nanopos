@@ -297,6 +297,24 @@
         </select>
         <div id="ticket-direccion-display" style="display:none;font-size:13px;color:#555;background:#f4f4f4;border-radius:8px;padding:8px 10px;margin-top:8px">📍</div>
         <div id="ticket-envio-info" style="font-size:12px;color:#1a7d3a;font-weight:600;display:none;margin-top:4px"></div>
+        <div id="ticket-envio-domicilio" style="display:none;font-size:13px;background:#e7f3ff;border-radius:8px;padding:10px;margin-top:8px">
+          <div style="font-weight:700;color:#0056b3;margin-bottom:6px">🛵 Control de envío</div>
+          <div id="envio-domicilio-sin-asignar">
+            <div style="display:flex;gap:6px;margin-bottom:6px">
+              <input type="text" inputmode="decimal" id="envio-paga-con" placeholder="Cliente paga con $" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd" />
+              <span id="envio-cambio-calculado" style="align-self:center;font-weight:600;color:#1a7d3a;white-space:nowrap"></span>
+            </div>
+            <button id="btn-enviar-whatsapp-grupo" style="width:100%;padding:8px;border-radius:6px;border:1px solid #25D366;background:white;color:#128C4A;font-weight:600;font-size:12.5px;cursor:pointer;margin-bottom:6px">📤 Enviar a grupo de WhatsApp</button>
+            <div style="display:flex;gap:6px">
+              <select id="envio-repartidor-select" style="flex:1;padding:8px;border-radius:6px;border:1px solid #ddd"></select>
+              <button id="btn-asignar-repartidor" style="padding:8px 12px;border-radius:6px;border:none;background:#0056b3;color:white;font-size:12.5px;font-weight:600;cursor:pointer">Asignar</button>
+            </div>
+          </div>
+          <div id="envio-domicilio-asignado" style="display:none">
+            <div id="envio-asignado-texto" style="margin-bottom:6px"></div>
+            <button id="btn-liquidar-entrega" style="width:100%;padding:8px;border-radius:6px;border:1px solid #1a7d3a;background:white;color:#1a7d3a;font-weight:600;font-size:12.5px;cursor:pointer">✅ Liquidar entrega (ya regresó)</button>
+          </div>
+        </div>
         <div id="ticket-lealtad-info" style="display:none;font-size:12px;background:#fff8e1;color:#a97800;border-radius:8px;padding:8px 10px;margin-top:8px">
           <div id="ticket-lealtad-texto"></div>
           <button id="btn-canjear-lealtad" style="display:none;width:100%;margin-top:6px;padding:8px;border-radius:6px;border:1px solid #f5b301;background:white;color:#a97800;font-size:12px;font-weight:600;cursor:pointer">🎁 Canjear puntos</button>
@@ -337,6 +355,7 @@
     <button class="item" id="btn-abrir-compras">🛒 Planeación de compras</button>
     <button class="item" id="btn-abrir-lealtad">🎁 Lealtad</button>
     <button class="item" id="btn-abrir-resenas">⭐ Reseñas</button>
+    <button class="item" id="btn-abrir-repartidores">🛵 Repartidores</button>
     <button class="item" id="btn-abrir-clientes">👥 Clientes</button>
     <button class="item" id="btn-abrir-reparto">🤝 Reparto de utilidades</button>
     <button class="item" id="btn-abrir-importar-recetas">📋 Importar recetas</button>
@@ -482,6 +501,23 @@
   <div id="resenas-resumen" style="padding:0 12px 12px"></div>
 
   <div id="resenas-lista" style="padding:0 12px 24px"></div>
+</div>
+
+<!-- Repartidores -->
+<div class="full-overlay" id="overlay-repartidores">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-repartidores">✕</button>
+    <span class="titulo">Repartidores</span>
+  </div>
+  <div class="form-inline">
+    <input type="text" id="nuevo-repartidor-nombre" placeholder="Nombre" style="flex:1" />
+    <input type="text" id="nuevo-repartidor-telefono" placeholder="Teléfono (opcional)" style="width:140px" />
+    <button id="btn-agregar-repartidor">+ Agregar</button>
+  </div>
+  <table class="tabla-simple">
+    <thead><tr><th>Nombre</th><th>Teléfono</th><th></th><th></th></tr></thead>
+    <tbody id="repartidores-tabla-body"></tbody>
+  </table>
 </div>
 
 <!-- Catálogo de clientes -->
