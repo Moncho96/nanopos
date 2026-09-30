@@ -1562,6 +1562,52 @@ document.getElementById('btn-cerrar-sesion').addEventListener('click', async () 
   window.location.href = '/login';
 });
 
+document.getElementById('btn-importar-respaldo-pf').addEventListener('click', () => {
+  document.getElementById('pf-archivo-respaldo').click();
+});
+
+document.getElementById('pf-archivo-respaldo').addEventListener('change', async (e) => {
+  const archivo = e.target.files[0];
+  const statusEl = document.getElementById('pf-import-status');
+  if (!archivo) return;
+
+  statusEl.style.color = '#666';
+  statusEl.textContent = 'Leyendo archivo...';
+
+  try {
+    const texto = await archivo.text();
+    const datos = JSON.parse(texto);
+
+    if (!confirm(`Se va a importar el respaldo con ${datos.entries?.length || 0} días registrados. ¿Continuar?`)) {
+      statusEl.textContent = '';
+      return;
+    }
+
+    statusEl.textContent = 'Importando...';
+    const resp = await fetch('/api/profit-first/importar-respaldo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: texto,
+    });
+    const resultado = await resp.json();
+
+    if (!resp.ok) {
+      statusEl.style.color = '#b8232f';
+      statusEl.textContent = resultado.error || 'No se pudo importar';
+      return;
+    }
+
+    statusEl.style.color = '#1a7d3a';
+    statusEl.textContent = `✅ Importado: ${resultado.diasProcesados} días, ${resultado.movimientosCreados} movimientos creados.`;
+    cargarProfitFirst();
+  } catch (err) {
+    statusEl.style.color = '#b8232f';
+    statusEl.textContent = 'El archivo no es un JSON válido, o hubo un error al importar.';
+  } finally {
+    e.target.value = '';
+  }
+});
+
 cargarInicial();
 
 // ==================== PROFIT FIRST ====================
