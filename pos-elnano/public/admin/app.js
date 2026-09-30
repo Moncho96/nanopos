@@ -65,8 +65,6 @@ async function cargarInicial() {
   aplicarPermisosUI();
 
   state.sucursales = await fetch('/api/sucursales').then((r) => r.json());
-  state.categorias = await fetch('/api/categorias').then((r) => r.json());
-  state.productos = await fetch('/api/productos').then((r) => r.json());
 
   const select = document.getElementById('sucursal-select');
   select.innerHTML = state.sucursales.map((s) => `<option value="${s.id}">${s.nombre}</option>`).join('');
@@ -92,8 +90,15 @@ async function cargarInicial() {
   }
   localStorage.setItem('elnano_sucursal_id', select.value);
 
-  select.addEventListener('change', () => {
+  // El menú (categorías/productos) es independiente por sucursal.
+  state.categorias = await fetch(`/api/categorias?sucursal_id=${select.value}`).then((r) => r.json());
+  state.productos = await fetch(`/api/productos?sucursal_id=${select.value}`).then((r) => r.json());
+
+  select.addEventListener('change', async () => {
     localStorage.setItem('elnano_sucursal_id', select.value);
+    state.categorias = await fetch(`/api/categorias?sucursal_id=${select.value}`).then((r) => r.json());
+    state.productos = await fetch(`/api/productos?sucursal_id=${select.value}`).then((r) => r.json());
+    state.categoriaActivaOverlay = state.categorias[0]?.id ?? null;
   });
 
   state.categoriaActivaOverlay = state.categorias[0]?.id ?? null;
@@ -315,8 +320,9 @@ document.getElementById('btn-abrir-menu-admin').addEventListener('click', () => 
 document.getElementById('btn-cerrar-menu-admin').addEventListener('click', async () => {
   document.getElementById('overlay-menu-admin').classList.remove('abierto');
   // Recarga la lista "normal" (sin ocultos) para que la toma de pedidos no se vea afectada
-  state.categorias = await fetch('/api/categorias').then((r) => r.json());
-  state.productos = await fetch('/api/productos').then((r) => r.json());
+  const sucursalId = document.getElementById('sucursal-select').value;
+  state.categorias = await fetch(`/api/categorias?sucursal_id=${sucursalId}`).then((r) => r.json());
+  state.productos = await fetch(`/api/productos?sucursal_id=${sucursalId}`).then((r) => r.json());
 });
 
 
@@ -1793,11 +1799,57 @@ async function cargarMenuAdmin() {
   renderSelectCategoriasAdmin();
   renderCategoriasAdmin();
   renderProductosAdmin();
+
+  const origenSel = document.getElementById('copiar-menu-origen');
+  const destinoSel = document.getElementById('copiar-menu-destino');
+  const opciones = state.sucursales.map((s) => `<option value="${s.id}">${s.nombre}</option>`).join('');
+  origenSel.innerHTML = opciones;
+  destinoSel.innerHTML = opciones;
+  // Por conveniencia, precarga origen = sucursal actual, destino = la otra
+  origenSel.value = document.getElementById('sucursal-select').value;
+  const otra = state.sucursales.find((s) => String(s.id) !== origenSel.value);
+  if (otra) destinoSel.value = otra.id;
 }
 
+document.getElementById('btn-copiar-menu').addEventListener('click', async () => {
+  const sucursal_origen_id = document.getElementById('copiar-menu-origen').value;
+  const sucursal_destino_id = document.getElementById('copiar-menu-destino').value;
+  if (sucursal_origen_id === sucursal_destino_id) {
+    alert('Elige dos sucursales distintas');
+    return;
+  }
+  const origenNombre = state.sucursales.find((s) => String(s.id) === sucursal_origen_id)?.nombre;
+  const destinoNombre = state.sucursales.find((s) => String(s.id) === sucursal_destino_id)?.nombre;
+  if (!confirm(`¿Copiar todo el menú de "${origenNombre}" hacia "${destinoNombre}"? Esto AGREGA los productos, no borra lo que ya tenga "${destinoNombre}".`)) return;
+
+  const btn = document.getElementById('btn-copiar-menu');
+  btn.disabled = true;
+  btn.textContent = 'Copiando...';
+
+  const resp = await fetch('/api/admin/copiar-menu', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursal_origen_id, sucursal_destino_id }),
+  });
+  const resultado = await resp.json();
+  btn.disabled = false;
+  btn.textContent = 'Copiar menú';
+
+  if (!resp.ok) {
+    alert(resultado.error || 'No se pudo copiar el menú');
+    return;
+  }
+  alert(`Listo: se copiaron ${resultado.categoriasCopiadas} categoría(s) y ${resultado.productosCopiados} producto(s) a "${destinoNombre}".`);
+
+  if (String(document.getElementById('sucursal-select').value) === String(sucursal_destino_id)) {
+    cargarMenuAdmin();
+  }
+});
+
 async function recargarCategoriasYProductos() {
-  state.categorias = await fetch('/api/categorias').then((r) => r.json());
-  state.productos = await fetch('/api/productos?todos=true').then((r) => r.json());
+  const sucursalId = document.getElementById('sucursal-select').value;
+  state.categorias = await fetch(`/api/categorias?sucursal_id=${sucursalId}`).then((r) => r.json());
+  state.productos = await fetch(`/api/productos?sucursal_id=${sucursalId}&todos=true`).then((r) => r.json());
 }
 
 function renderSelectCategoriasAdmin() {
@@ -1917,7 +1969,7 @@ document.getElementById('btn-agregar-categoria').addEventListener('click', async
   await fetch('/api/categorias', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nombre }),
+    body: JSON.stringify({ nombre, sucursal_id: document.getElementById('sucursal-select').value }),
   });
   document.getElementById('nueva-categoria-nombre').value = '';
   await recargarCategoriasYProductos();
@@ -1941,7 +1993,7 @@ document.getElementById('btn-agregar-producto-admin').addEventListener('click', 
   await fetch('/api/productos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ nombre, categoria_id, precio }),
+    body: JSON.stringify({ nombre, categoria_id, precio, sucursal_id: document.getElementById('sucursal-select').value }),
   });
   document.getElementById('nuevo-prod-nombre').value = '';
   document.getElementById('nuevo-prod-precio').value = '';

@@ -603,6 +603,18 @@
     <button class="filtro" data-submenu="insumos">Insumos</button>
   </div>
 
+  <div style="padding:10px 12px;font-size:12px;color:#666;background:#fff8e1;margin:0 12px 10px;border-radius:8px">
+    Cada sucursal tiene su propio menú — lo que edites aquí solo afecta a la sucursal
+    elegida arriba. Si quieres copiar todo el menú de una sucursal a otra (para no capturar
+    todo dos veces), usa el botón:
+    <div style="display:flex;gap:6px;margin-top:8px">
+      <select id="copiar-menu-origen" style="flex:1;padding:6px;border-radius:6px;border:1px solid #ddd"></select>
+      <span style="align-self:center">→</span>
+      <select id="copiar-menu-destino" style="flex:1;padding:6px;border-radius:6px;border:1px solid #ddd"></select>
+      <button id="btn-copiar-menu" style="padding:6px 10px;border-radius:6px;border:none;background:#a97800;color:white;font-size:12px;cursor:pointer">Copiar menú</button>
+    </div>
+  </div>
+
   <div id="vista-menu-productos">
     <div class="form-inline">
       <input type="text" id="nuevo-prod-nombre" placeholder="Nombre del producto" />
