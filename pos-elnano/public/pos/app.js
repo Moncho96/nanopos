@@ -72,8 +72,6 @@ async function cargarInicial() {
   aplicarPermisosUI();
 
   state.sucursales = await fetch('/api/sucursales').then((r) => r.json());
-  state.categorias = await fetch('/api/categorias').then((r) => r.json());
-  state.productos = await fetch('/api/productos').then((r) => r.json());
 
   const select = document.getElementById('sucursal-select');
   select.innerHTML = state.sucursales.map((s) => `<option value="${s.id}">${s.nombre}</option>`).join('');
@@ -107,9 +105,17 @@ async function cargarInicial() {
 
   localStorage.setItem('elnano_sucursal_id', select.value);
 
+  // El menú (categorías/productos) es independiente por sucursal, así que se carga
+  // hasta aquí, ya con la sucursal resuelta.
+  state.categorias = await fetch(`/api/categorias?sucursal_id=${select.value}`).then((r) => r.json());
+  state.productos = await fetch(`/api/productos?sucursal_id=${select.value}`).then((r) => r.json());
+
   select.addEventListener('change', async () => {
     localStorage.setItem('elnano_sucursal_id', select.value);
     state.envios = await fetch(`/api/envios?sucursal_id=${select.value}`).then((r) => r.json());
+    state.categorias = await fetch(`/api/categorias?sucursal_id=${select.value}`).then((r) => r.json());
+    state.productos = await fetch(`/api/productos?sucursal_id=${select.value}`).then((r) => r.json());
+    state.categoriaActivaOverlay = state.categorias[0]?.id ?? null;
     cargarPedidosYContar();
   });
 
