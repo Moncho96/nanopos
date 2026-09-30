@@ -374,6 +374,7 @@
     <button class="item" id="btn-abrir-resenas">⭐ Reseñas</button>
     <button class="item" id="btn-abrir-repartidores">🛵 Repartidores</button>
     <button class="item" id="btn-abrir-clientes">👥 Clientes</button>
+    <button class="item" id="btn-abrir-profit-first">💰 Profit First</button>
     <button class="item" id="btn-abrir-reparto">🤝 Reparto de utilidades</button>
     <button class="item" id="btn-abrir-importar-recetas">📋 Importar recetas</button>
     <button class="item" id="btn-abrir-menu-admin">🍽️ Menú (productos e insumos)</button>
@@ -550,6 +551,21 @@
     <thead><tr><th>Nombre</th><th>Teléfono</th><th>Dirección</th><th>Colonia</th><th class="num">Puntos</th><th></th></tr></thead>
     <tbody id="clientes-tabla-body"></tbody>
   </table>
+</div>
+
+<!-- Profit First -->
+<div class="full-overlay" id="overlay-profit-first">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-profit-first">✕</button>
+    <span class="titulo">Profit First</span>
+  </div>
+  <div style="padding:12px;font-size:13px;color:#666">
+    Cada vez que cierras un corte de cualquier sucursal, el total contado se reparte solo entre
+    estos sobres según su porcentaje. Ajusta los porcentajes cuando quieras — no tienen que
+    sumar 100% si estás en transición.
+  </div>
+  <div id="pf-total-porcentaje" style="padding:0 12px 8px;font-size:13px;font-weight:600"></div>
+  <div id="pf-categorias" style="padding:0 12px 24px"></div>
 </div>
 
 <!-- Reparto de utilidades -->

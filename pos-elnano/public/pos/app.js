@@ -1255,6 +1255,13 @@ document.getElementById('btn-abrir-clientes').addEventListener('click', () => {
 });
 document.getElementById('btn-cerrar-clientes').addEventListener('click', () => document.getElementById('overlay-clientes').classList.remove('abierto'));
 
+document.getElementById('btn-abrir-profit-first').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-profit-first').classList.add('abierto');
+  cargarProfitFirst();
+});
+document.getElementById('btn-cerrar-profit-first').addEventListener('click', () => document.getElementById('overlay-profit-first').classList.remove('abierto'));
+
 document.getElementById('btn-abrir-reparto').addEventListener('click', () => {
   document.getElementById('drawer-overlay').classList.remove('abierto');
   document.getElementById('overlay-reparto').classList.add('abierto');
@@ -1557,6 +1564,75 @@ document.getElementById('btn-cerrar-sesion').addEventListener('click', async () 
 
 cargarInicial();
 
+// ==================== PROFIT FIRST ====================
+
+async function cargarProfitFirst() {
+  const categorias = await fetch('/api/profit-first/categorias').then((r) => r.json());
+
+  const sumaPorcentajes = categorias.reduce((s, c) => s + Number(c.porcentaje), 0);
+  const totalEl = document.getElementById('pf-total-porcentaje');
+  totalEl.textContent = `Suma de porcentajes: ${sumaPorcentajes.toFixed(1)}%`;
+  totalEl.style.color = Math.abs(sumaPorcentajes - 100) < 0.1 ? '#1a7d3a' : '#a97800';
+
+  document.getElementById('pf-categorias').innerHTML = categorias
+    .map(
+      (c) => `
+    <div style="background:white;border-radius:12px;padding:14px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <strong>${escapeHtml(c.nombre)}</strong>
+        <span style="font-size:20px;font-weight:bold;color:${c.saldo < 0 ? '#b8232f' : '#1a7d3a'}">$${Number(c.saldo).toFixed(2)}</span>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
+        <span style="font-size:12px;color:#888">Porcentaje:</span>
+        <input type="text" inputmode="decimal" class="pf-porcentaje-edit" data-id="${c.id}" value="${c.porcentaje}" style="width:60px;padding:5px;border-radius:6px;border:1px solid #ddd;text-align:center" />
+        <span style="font-size:12px;color:#888">%</span>
+        <button class="btn-eliminar-fila" data-guardar-pf="${c.id}" title="Guardar porcentaje">💾</button>
+      </div>
+      <div style="display:flex;gap:6px">
+        <input type="text" inputmode="decimal" class="pf-gasto-monto" data-id="${c.id}" placeholder="Monto" style="width:80px;padding:6px;border-radius:6px;border:1px dashed #ccc" />
+        <input type="text" class="pf-gasto-desc" data-id="${c.id}" placeholder="Descripción" style="flex:1;padding:6px;border-radius:6px;border:1px dashed #ccc" />
+        <button class="btn-eliminar-fila" data-registrar-gasto-pf="${c.id}">+ Gasto</button>
+      </div>
+    </div>`
+    )
+    .join('');
+
+  document.querySelectorAll('.pf-porcentaje-edit, .pf-gasto-monto').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
+    });
+  });
+  document.querySelectorAll('[data-guardar-pf]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.guardarPf;
+      const porcentaje = document.querySelector(`.pf-porcentaje-edit[data-id="${id}"]`).value;
+      await fetch(`/api/profit-first/categorias/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ porcentaje }),
+      });
+      cargarProfitFirst();
+    });
+  });
+  document.querySelectorAll('[data-registrar-gasto-pf]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.registrarGastoPf;
+      const monto = document.querySelector(`.pf-gasto-monto[data-id="${id}"]`).value;
+      const descripcion = document.querySelector(`.pf-gasto-desc[data-id="${id}"]`).value.trim();
+      if (!monto) {
+        alert('Falta el monto');
+        return;
+      }
+      await fetch('/api/profit-first/gastos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categoria_id: id, monto, descripcion }),
+      });
+      cargarProfitFirst();
+    });
+  });
+}
+
 // ==================== INFORMES ====================
 
 document.getElementById('btn-abrir-informes').addEventListener('click', () => {
@@ -1724,7 +1800,7 @@ async function cargarInformes() {
 const DRAWER_SOLO_ENCARGADO = [
   'btn-abrir-compra-registro', 'btn-abrir-importar', 'btn-abrir-conteo', 'btn-abrir-compras',
   'btn-abrir-lealtad', 'btn-abrir-resenas', 'btn-abrir-reparto', 'btn-abrir-importar-recetas',
-  'btn-abrir-menu-admin', 'btn-abrir-envios', 'btn-abrir-empleados',
+  'btn-abrir-menu-admin', 'btn-abrir-envios', 'btn-abrir-empleados', 'btn-abrir-profit-first',
 ];
 const DRAWER_CAJERO_O_ENCARGADO = ['btn-abrir-corte', 'btn-abrir-informes', 'btn-abrir-repartidores'];
 
