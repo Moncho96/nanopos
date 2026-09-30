@@ -1296,11 +1296,12 @@ app.patch('/api/profit-first/categorias/:id', requierePuesto(), async (req, res)
 });
 
 app.post('/api/profit-first/gastos', requierePuesto(), async (req, res) => {
-  const { categoria_id, monto, descripcion } = req.body;
+  const { categoria_id, monto, descripcion, tipo } = req.body;
   if (!categoria_id || !monto) return res.status(400).json({ error: 'Falta la categoría o el monto' });
+  const tipoFinal = tipo === 'ingreso' ? 'ingreso' : 'gasto';
   const { rows } = await pool.query(
-    `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion) VALUES ($1,'gasto',$2,$3) RETURNING *`,
-    [categoria_id, monto, descripcion || null]
+    `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion) VALUES ($1,$2,$3,$4) RETURNING *`,
+    [categoria_id, tipoFinal, monto, descripcion || null]
   );
   res.json(rows[0]);
 });
@@ -1317,7 +1318,7 @@ app.get('/api/profit-first/movimientos', requierePuesto(), async (req, res) => {
 });
 
 app.delete('/api/profit-first/movimientos/:id', requierePuesto(), async (req, res) => {
-  await pool.query(`DELETE FROM profit_first_movimientos WHERE id = $1 AND tipo = 'gasto'`, [req.params.id]);
+  await pool.query(`DELETE FROM profit_first_movimientos WHERE id = $1`, [req.params.id]);
   res.json({ ok: true });
 });
 
