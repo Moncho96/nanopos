@@ -2351,10 +2351,11 @@ app.get('/api/corte/cerrado', requierePuesto('cajero'), async (req, res) => {
 });
 
 app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
-  const { sucursal_id, fecha, contado } = req.body; // contado: { efectivo, tarjeta, transferencia }
+  const { sucursal_id, fecha, contado, ventas_didi } = req.body; // contado: { efectivo, tarjeta, transferencia }
   if (!sucursal_id || !fecha || !contado) {
     return res.status(400).json({ error: 'Faltan datos para cerrar el corte' });
   }
+  const ventasDidi = Number(ventas_didi) || 0;
 
   const corte = await calcularCorte(sucursal_id, fecha);
   const resumenConContado = corte.resumen.map((r) => {
@@ -2365,8 +2366,8 @@ app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
   const diferencia = Number((totalContado - corte.totalNeto).toFixed(2));
 
   const { rows } = await pool.query(
-    `INSERT INTO cortes (sucursal_id, fecha, resumen, total_ventas, total_gastos, total_envios, total_neto_esperado, total_contado, diferencia)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    `INSERT INTO cortes (sucursal_id, fecha, resumen, total_ventas, total_gastos, total_envios, total_neto_esperado, total_contado, diferencia, ventas_didi)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
      ON CONFLICT (sucursal_id, fecha) DO UPDATE SET
        resumen = EXCLUDED.resumen,
        total_ventas = EXCLUDED.total_ventas,
@@ -2375,6 +2376,7 @@ app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
        total_neto_esperado = EXCLUDED.total_neto_esperado,
        total_contado = EXCLUDED.total_contado,
        diferencia = EXCLUDED.diferencia,
+       ventas_didi = EXCLUDED.ventas_didi,
        cerrado_en = now()
      RETURNING *`,
     [
@@ -2387,6 +2389,7 @@ app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
       corte.totalNeto,
       totalContado,
       diferencia,
+      ventasDidi,
     ]
   );
 
@@ -2397,12 +2400,13 @@ app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
   // para no duplicarlo.
   await pool.query(`DELETE FROM profit_first_movimientos WHERE corte_id = $1 AND tipo = 'ingreso'`, [corteGuardado.id]);
   const { rows: categoriasPF } = await pool.query('SELECT * FROM profit_first_categorias ORDER BY orden');
+  const baseParaProfitFirst = totalContado + ventasDidi;
   for (const cat of categoriasPF) {
-    const monto = Number((totalContado * (Number(cat.porcentaje) / 100)).toFixed(2));
+    const monto = Number((baseParaProfitFirst * (Number(cat.porcentaje) / 100)).toFixed(2));
     if (monto > 0) {
       await pool.query(
         `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, corte_id) VALUES ($1,'ingreso',$2,$3,$4)`,
-        [cat.id, monto, `Corte del ${fecha}`, corteGuardado.id]
+        [cat.id, monto, `Corte del ${fecha}${ventasDidi > 0 ? ' (incluye DiDi)' : ''}`, corteGuardado.id]
       );
     }
   }
