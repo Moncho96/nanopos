@@ -1612,6 +1612,51 @@ cargarInicial();
 
 // ==================== PROFIT FIRST ====================
 
+async function abrirHistorialProfitFirst(categoriaId, nombreCategoria) {
+  const movimientos = await fetch(`/api/profit-first/movimientos?categoria_id=${categoriaId}`).then((r) => r.json());
+
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-historial-pf">
+      <div class="modal-box">
+        <h3>Historial — ${nombreCategoria}</h3>
+        <div id="historial-pf-lista">
+          ${
+            movimientos
+              .map(
+                (m) => `
+            <div class="editar-item-row" style="align-items:center">
+              <span style="font-size:12.5px">
+                <strong style="color:${m.tipo === 'ingreso' ? '#1a7d3a' : '#b8232f'}">${m.tipo === 'ingreso' ? '+' : '−'}$${Number(m.monto).toFixed(2)}</strong>
+                — ${escapeHtml(m.descripcion || '')}<br>
+                <span style="color:#999">${new Date(m.creado_en).toLocaleDateString('es-MX')}</span>
+              </span>
+              <button data-borrar-mov-pf="${m.id}">×</button>
+            </div>`
+              )
+              .join('') || '<p style="color:#999;font-size:13px">Sin movimientos todavía</p>'
+          }
+        </div>
+        <button class="btn-cancelar-modal" id="btn-cerrar-historial-pf">Cerrar</button>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  document.getElementById('modal-overlay-historial-pf').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-historial-pf') document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-cerrar-historial-pf').addEventListener('click', () => {
+    document.getElementById('modal-container').innerHTML = '';
+  });
+  document.querySelectorAll('[data-borrar-mov-pf]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Borrar este movimiento?')) return;
+      await fetch(`/api/profit-first/movimientos/${btn.dataset.borrarMovPf}`, { method: 'DELETE' });
+      abrirHistorialProfitFirst(categoriaId, nombreCategoria);
+      cargarProfitFirst();
+    });
+  });
+}
+
 async function cargarProfitFirst() {
   const categorias = await fetch('/api/profit-first/categorias').then((r) => r.json());
 
@@ -1634,10 +1679,14 @@ async function cargarProfitFirst() {
         <span style="font-size:12px;color:#888">%</span>
         <button class="btn-eliminar-fila" data-guardar-pf="${c.id}" title="Guardar porcentaje">💾</button>
       </div>
-      <div style="display:flex;gap:6px">
+      <div style="display:flex;gap:6px;margin-bottom:6px">
         <input type="text" inputmode="decimal" class="pf-gasto-monto" data-id="${c.id}" placeholder="Monto" style="width:80px;padding:6px;border-radius:6px;border:1px dashed #ccc" />
         <input type="text" class="pf-gasto-desc" data-id="${c.id}" placeholder="Descripción" style="flex:1;padding:6px;border-radius:6px;border:1px dashed #ccc" />
-        <button class="btn-eliminar-fila" data-registrar-gasto-pf="${c.id}">+ Gasto</button>
+      </div>
+      <div style="display:flex;gap:6px">
+        <button class="btn-eliminar-fila" data-registrar-gasto-pf="${c.id}" style="flex:1">− Gasto</button>
+        <button class="btn-eliminar-fila" data-registrar-ingreso-pf="${c.id}" style="flex:1;color:#1a7d3a">+ Ingreso (corrección)</button>
+        <button class="btn-eliminar-fila" data-ver-historial-pf="${c.id}" data-nombre-pf="${escapeHtml(c.nombre)}" title="Ver historial">📋</button>
       </div>
     </div>`
     )
@@ -1672,10 +1721,30 @@ async function cargarProfitFirst() {
       await fetch('/api/profit-first/gastos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ categoria_id: id, monto, descripcion }),
+        body: JSON.stringify({ categoria_id: id, monto, descripcion, tipo: 'gasto' }),
       });
       cargarProfitFirst();
     });
+  });
+  document.querySelectorAll('[data-registrar-ingreso-pf]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const id = btn.dataset.registrarIngresoPf;
+      const monto = document.querySelector(`.pf-gasto-monto[data-id="${id}"]`).value;
+      const descripcion = document.querySelector(`.pf-gasto-desc[data-id="${id}"]`).value.trim();
+      if (!monto) {
+        alert('Falta el monto');
+        return;
+      }
+      await fetch('/api/profit-first/gastos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ categoria_id: id, monto, descripcion, tipo: 'ingreso' }),
+      });
+      cargarProfitFirst();
+    });
+  });
+  document.querySelectorAll('[data-ver-historial-pf]').forEach((btn) => {
+    btn.addEventListener('click', () => abrirHistorialProfitFirst(btn.dataset.verHistorialPf, btn.dataset.nombrePf));
   });
 }
 
