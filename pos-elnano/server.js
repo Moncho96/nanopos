@@ -275,16 +275,28 @@ app.get('/api/sucursales', async (req, res) => {
 
 // ---------- Categorías y productos ----------
 app.get('/api/categorias', async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM categorias ORDER BY id');
+  const { sucursal_id } = req.query;
+  const { rows } = await pool.query(
+    sucursal_id ? 'SELECT * FROM categorias WHERE sucursal_id = $1 ORDER BY id' : 'SELECT * FROM categorias ORDER BY id',
+    sucursal_id ? [sucursal_id] : []
+  );
   res.json(rows);
 });
 
 app.get('/api/productos', async (req, res) => {
-  const { todos } = req.query;
+  const { todos, sucursal_id } = req.query;
+  const condiciones = [];
+  const params = [];
+  if (sucursal_id) {
+    params.push(sucursal_id);
+    condiciones.push(`sucursal_id = $${params.length}`);
+  }
+  if (todos !== 'true') condiciones.push('disponible = true');
+  const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
+
   const { rows: productos } = await pool.query(
-    todos === 'true'
-      ? 'SELECT * FROM productos ORDER BY categoria_id, nombre'
-      : 'SELECT * FROM productos WHERE disponible = true ORDER BY categoria_id, nombre'
+    `SELECT * FROM productos ${where} ORDER BY categoria_id, nombre`,
+    params
   );
   const { rows: grupos } = await pool.query(
     'SELECT * FROM grupos_modificadores ORDER BY producto_id, orden, id'
@@ -315,9 +327,13 @@ app.get('/api/productos', async (req, res) => {
 
 // ---------- Administración del menú: categorías ----------
 app.post('/api/categorias', requierePuesto(), async (req, res) => {
-  const { nombre } = req.body;
+  const { nombre, sucursal_id } = req.body;
   if (!nombre || !nombre.trim()) return res.status(400).json({ error: 'Falta el nombre' });
-  const { rows } = await pool.query('INSERT INTO categorias (nombre) VALUES ($1) RETURNING *', [nombre.trim()]);
+  if (!sucursal_id) return res.status(400).json({ error: 'Falta la sucursal' });
+  const { rows } = await pool.query(
+    'INSERT INTO categorias (nombre, sucursal_id) VALUES ($1,$2) RETURNING *',
+    [nombre.trim(), sucursal_id]
+  );
   res.json(rows[0]);
 });
 
@@ -343,13 +359,14 @@ app.delete('/api/categorias/:id', requierePuesto(), async (req, res) => {
 
 // ---------- Administración del menú: productos ----------
 app.post('/api/productos', requierePuesto(), async (req, res) => {
-  const { nombre, categoria_id, precio, estacion } = req.body;
+  const { nombre, categoria_id, precio, estacion, sucursal_id } = req.body;
   if (!nombre || !categoria_id || precio === undefined) {
     return res.status(400).json({ error: 'Faltan datos del producto' });
   }
+  if (!sucursal_id) return res.status(400).json({ error: 'Falta la sucursal' });
   const { rows } = await pool.query(
-    `INSERT INTO productos (nombre, categoria_id, precio, estacion) VALUES ($1,$2,$3,$4) RETURNING *`,
-    [nombre.trim(), categoria_id, precio, estacion || 'cocina']
+    `INSERT INTO productos (nombre, categoria_id, precio, estacion, sucursal_id) VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [nombre.trim(), categoria_id, precio, estacion || 'cocina', sucursal_id]
   );
   res.json(rows[0]);
 });
@@ -1409,6 +1426,87 @@ app.post('/api/profit-first/importar-respaldo', requierePuesto(), async (req, re
   }
 
   res.json({ ok: true, movimientosCreados, diasProcesados: entries.length });
+});
+
+// Copia el menú completo de una sucursal a otra: categorías, productos, recetas,
+// variantes/extras y etiquetas de comentario — manteniendo todo bien enlazado.
+// No borra nada de la sucursal destino; si ya tiene productos, esto los deja intactos
+// y solo agrega los de la sucursal origen (por eso conviene usarlo una sola vez, al
+// principio, antes de que las dos sucursales empiecen a divergir).
+app.post('/api/admin/copiar-menu', requierePuesto(), async (req, res) => {
+  const { sucursal_origen_id, sucursal_destino_id } = req.body;
+  if (!sucursal_origen_id || !sucursal_destino_id) {
+    return res.status(400).json({ error: 'Falta la sucursal de origen o destino' });
+  }
+  if (String(sucursal_origen_id) === String(sucursal_destino_id)) {
+    return res.status(400).json({ error: 'Elige dos sucursales distintas' });
+  }
+
+  const { rows: categoriasOrigen } = await pool.query('SELECT * FROM categorias WHERE sucursal_id = $1 ORDER BY id', [sucursal_origen_id]);
+  const mapaCategorias = {}; // id viejo -> id nuevo
+
+  for (const cat of categoriasOrigen) {
+    const { rows } = await pool.query(
+      'INSERT INTO categorias (nombre, sucursal_id) VALUES ($1,$2) RETURNING id',
+      [cat.nombre, sucursal_destino_id]
+    );
+    mapaCategorias[cat.id] = rows[0].id;
+
+    // Etiquetas de comentario de esta categoría
+    const { rows: etiquetas } = await pool.query('SELECT * FROM etiquetas_comentario WHERE categoria_id = $1 ORDER BY orden', [cat.id]);
+    for (const et of etiquetas) {
+      await pool.query('INSERT INTO etiquetas_comentario (categoria_id, texto, orden) VALUES ($1,$2,$3)', [rows[0].id, et.texto, et.orden]);
+    }
+  }
+
+  const { rows: productosOrigen } = await pool.query('SELECT * FROM productos WHERE sucursal_id = $1 ORDER BY id', [sucursal_origen_id]);
+  let productosCopiados = 0;
+
+  for (const prod of productosOrigen) {
+    const nuevaCategoriaId = mapaCategorias[prod.categoria_id];
+    if (!nuevaCategoriaId) continue; // por si el producto quedó sin categoría válida
+
+    const { rows: nuevoProdRows } = await pool.query(
+      `INSERT INTO productos (nombre, categoria_id, precio, disponible, estacion, imagen, sucursal_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [prod.nombre, nuevaCategoriaId, prod.precio, prod.disponible, prod.estacion, prod.imagen, sucursal_destino_id]
+    );
+    const nuevoProductoId = nuevoProdRows[0].id;
+    productosCopiados++;
+
+    // Receta base
+    const { rows: receta } = await pool.query('SELECT * FROM producto_insumos WHERE producto_id = $1', [prod.id]);
+    for (const r of receta) {
+      await pool.query('INSERT INTO producto_insumos (producto_id, insumo_id, cantidad) VALUES ($1,$2,$3)', [nuevoProductoId, r.insumo_id, r.cantidad]);
+    }
+
+    // Grupos de variantes/extras y sus opciones
+    const { rows: grupos } = await pool.query('SELECT * FROM grupos_modificadores WHERE producto_id = $1 ORDER BY orden, id', [prod.id]);
+    for (const g of grupos) {
+      const { rows: nuevoGrupoRows } = await pool.query(
+        'INSERT INTO grupos_modificadores (producto_id, nombre, tipo, obligatorio, orden) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+        [nuevoProductoId, g.nombre, g.tipo, g.obligatorio, g.orden]
+      );
+      const nuevoGrupoId = nuevoGrupoRows[0].id;
+
+      const { rows: opciones } = await pool.query('SELECT * FROM opciones_modificador WHERE grupo_id = $1 ORDER BY orden, id', [g.id]);
+      for (const op of opciones) {
+        const { rows: nuevaOpcionRows } = await pool.query(
+          'INSERT INTO opciones_modificador (grupo_id, nombre, precio, multiplicador, orden) VALUES ($1,$2,$3,$4,$5) RETURNING id',
+          [nuevoGrupoId, op.nombre, op.precio, op.multiplicador, op.orden]
+        );
+        const nuevaOpcionId = nuevaOpcionRows[0].id;
+
+        // Insumos extra de esta opción (si tiene)
+        const { rows: insumosOpcion } = await pool.query('SELECT * FROM opcion_insumos WHERE opcion_id = $1', [op.id]);
+        for (const io of insumosOpcion) {
+          await pool.query('INSERT INTO opcion_insumos (opcion_id, insumo_id, cantidad) VALUES ($1,$2,$3)', [nuevaOpcionId, io.insumo_id, io.cantidad]);
+        }
+      }
+    }
+  }
+
+  res.json({ ok: true, categoriasCopiadas: categoriasOrigen.length, productosCopiados });
 });
 
 // ---------- Clientes ----------
