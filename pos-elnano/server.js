@@ -400,6 +400,22 @@ app.delete('/api/productos/:id', requierePuesto(), async (req, res) => {
   res.json({ ok: true, oculto: true });
 });
 
+// Borrado de verdad (no solo ocultar) — solo funciona si el producto nunca se ha usado
+// en ningún pedido, porque la tabla de pedido_items lo bloquea a propósito (sin CASCADE)
+// para no perder el historial. Si ya se usó, hay que ocultarlo en vez de borrarlo.
+app.delete('/api/productos/:id/definitivo', requierePuesto(), async (req, res) => {
+  try {
+    const { rows } = await pool.query('DELETE FROM productos WHERE id = $1 RETURNING id', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Producto no encontrado' });
+    res.json({ ok: true, borrado: true });
+  } catch (err) {
+    if (err.code === '23503') {
+      return res.status(400).json({ error: 'No se puede borrar: este producto ya se usó en algún pedido. Solo se puede ocultar del menú (botón 👁️/🚫), para no perder ese historial.' });
+    }
+    res.status(500).json({ error: 'No se pudo borrar el producto' });
+  }
+});
+
 // ---------- Insumos ----------
 app.get('/api/insumos', requierePuesto(), async (req, res) => {
   const { sucursal_id } = req.query;
