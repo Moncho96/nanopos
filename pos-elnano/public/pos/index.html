@@ -130,6 +130,23 @@
     .cat-sidebar-item { flex: 0 0 auto; border-left: none; border-bottom: 3px solid transparent; padding: 10px 14px; white-space: nowrap; }
     .cat-sidebar-item.active { border-left: none; border-bottom-color: #b8232f; }
 
+    /* Compactar el encabezado del ticket (datos de cliente, lealtad, envío) para que la
+       lista de productos ordenados no se quede escondida abajo de todo eso */
+    .ticket-header { padding: 8px 10px; flex-shrink: 0; max-height: 40vh; overflow-y: auto; }
+    .ticket-header input { padding: 7px 9px; font-size: 13px; margin-bottom: 4px; }
+    #ticket-lealtad-info, #ticket-envio-domicilio { padding: 6px 8px; font-size: 11.5px; margin-top: 5px; }
+    #ticket-lealtad-info button, #ticket-envio-domicilio button { padding: 6px !important; font-size: 11.5px !important; }
+    #ticket-acciones-extra { gap: 5px !important; }
+    #ticket-acciones-extra button { padding: 7px !important; font-size: 11px !important; }
+    .ticket-items { padding: 4px 10px; }
+    .ticket-item { padding: 6px 0; font-size: 12.5px; }
+    .ticket-footer { padding: 8px 10px; }
+
+    .productos-grid-overlay { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+    .prod-tile { padding: 8px; }
+    .prod-tile .emoji { font-size: 28px; margin-bottom: 4px; }
+    .prod-tile .nombre { font-size: 11.5px; min-height: 28px; }
+
     .ticket-panel { width: 100%; border-left: none; flex: 1; min-height: 0; }
 
     /* Por default se ve el ticket. El botón "+ Productos" cambia al catálogo */
