@@ -1321,6 +1321,94 @@ app.delete('/api/profit-first/movimientos/:id', requierePuesto(), async (req, re
   res.json({ ok: true });
 });
 
+// Importa el respaldo del sistema anterior de "caja chica" (metas diarias/semanales/mensuales
+// en vez de porcentajes) y lo traduce a movimientos en las categorías actuales.
+// Mapeo: Nómina→Nómina, Impuestos→Impuestos, Sueldo→Sueldo dueño, Fijos→Renta,
+// Aguinaldo→Aguinaldo, Utilidad→Utilidad. "Opex" no existía en el sistema viejo, se deja igual.
+app.post('/api/profit-first/importar-respaldo', requierePuesto(), async (req, res) => {
+  const { config, entries } = req.body;
+  if (!config || !Array.isArray(entries)) {
+    return res.status(400).json({ error: 'El archivo no tiene el formato esperado (config + entries)' });
+  }
+
+  // Evita importar dos veces por accidente
+  const { rows: yaImportado } = await pool.query(
+    `SELECT id FROM profit_first_movimientos WHERE descripcion LIKE '[Importado]%' LIMIT 1`
+  );
+  if (yaImportado.length && req.body.forzar !== true) {
+    return res.status(400).json({ error: 'Ya parece haber datos importados antes. Si de verdad quieres repetirlo, avísame para forzarlo.' });
+  }
+
+  const { rows: categorias } = await pool.query('SELECT id, nombre FROM profit_first_categorias');
+  const idPorNombre = {};
+  categorias.forEach((c) => (idPorNombre[c.nombre] = c.id));
+
+  const mapa = [
+    { nombre: 'Nómina', tasaDiaria: (config.nominaWeekly || 0) / 7, campoPagado: 'nominaPagada', saldoInicial: config.initNomina || 0 },
+    { nombre: 'Impuestos', tasaDiaria: config.taxDaily || 0, campoPagado: 'impPagado', saldoInicial: config.initImpuestos || 0 },
+    { nombre: 'Sueldo dueño', tasaDiaria: (config.sueldoWeekly || 0) / 7, campoPagado: 'sueldoPagado', saldoInicial: config.initSueldo || 0 },
+    { nombre: 'Renta', tasaDiaria: (config.fijosMonthly || 0) / 30, campoPagado: 'fijosPagado', saldoInicial: config.initFijos || 0 },
+    { nombre: 'Aguinaldo', tasaDiaria: config.aguinaldoDaily || 0, campoPagado: 'aguinaldoPagado', saldoInicial: config.initAguinaldo || 0 },
+  ];
+
+  let movimientosCreados = 0;
+  const fechaOrdenada = [...entries].sort((a, b) => (a.date < b.date ? -1 : 1));
+  const primerFecha = fechaOrdenada[0]?.date;
+
+  // Saldos iniciales (Utilidad incluida, aunque no tenga tasa diaria)
+  for (const item of [...mapa, { nombre: 'Utilidad', saldoInicial: config.initUtilidad || 0 }]) {
+    const categoriaId = idPorNombre[item.nombre];
+    if (categoriaId && item.saldoInicial) {
+      await pool.query(
+        `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, creado_en) VALUES ($1,'ingreso',$2,$3,$4)`,
+        [categoriaId, item.saldoInicial, '[Importado] Saldo inicial del respaldo anterior', `${primerFecha} 00:00:00`]
+      );
+      movimientosCreados++;
+    }
+  }
+
+  for (const entry of fechaOrdenada) {
+    for (const item of mapa) {
+      const categoriaId = idPorNombre[item.nombre];
+      if (!categoriaId) continue;
+
+      if (item.tasaDiaria > 0) {
+        await pool.query(
+          `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, creado_en) VALUES ($1,'ingreso',$2,$3,$4)`,
+          [categoriaId, Number(item.tasaDiaria.toFixed(2)), `[Importado] Meta diaria del ${entry.date}`, `${entry.date} 12:00:00`]
+        );
+        movimientosCreados++;
+      }
+      const pagado = Number(entry[item.campoPagado]) || 0;
+      if (pagado > 0) {
+        await pool.query(
+          `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, creado_en) VALUES ($1,'gasto',$2,$3,$4)`,
+          [categoriaId, pagado, `[Importado] Pago del ${entry.date}`, `${entry.date} 12:00:00`]
+        );
+        movimientosCreados++;
+      }
+    }
+
+    // El reparto grande de utilidad que traía tu respaldo, si aplica
+    if (entry.repartoUtilidad) {
+      const idUtilidad = idPorNombre['Utilidad'];
+      if (idUtilidad) {
+        await pool.query(
+          `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, creado_en) VALUES ($1,'gasto',$2,$3,$4)`,
+          [idUtilidad, entry.repartoUtilidad, `[Importado] Reparto de utilidad del ${entry.date} — revisa cómo se dividió entre socios`, `${entry.date} 12:00:00`]
+        );
+        movimientosCreados++;
+      }
+      await pool.query(
+        `INSERT INTO distribuciones_utilidad (fecha, socio, monto, nota) VALUES ($1,$2,$3,$4)`,
+        [entry.date, 'Importado (revisar división)', entry.repartoUtilidad, 'Importado del respaldo anterior — no se sabe cómo se dividió entre los socios, edítalo si hace falta']
+      );
+    }
+  }
+
+  res.json({ ok: true, movimientosCreados, diasProcesados: entries.length });
+});
+
 // ---------- Clientes ----------
 app.get('/api/clientes', async (req, res) => {
   const { telefono, buscar } = req.query;
