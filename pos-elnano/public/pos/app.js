@@ -1445,7 +1445,8 @@ function renderCuadreCaja() {
       <table class="tabla-simple">
         <thead><tr><th>Método</th><th class="num">Debía haber</th><th class="num">Contado</th><th class="num">Diferencia</th></tr></thead>
         <tbody>${filas}</tbody>
-      </table>`;
+      </table>
+      <div class="resumen-total" style="color:#5a2ca0"><span>🛵 Ventas DiDi (manual)</span><span>$${Number(corteCerradoActual.ventas_didi || 0).toFixed(2)}</span></div>`;
     return;
   }
 
@@ -1465,8 +1466,15 @@ function renderCuadreCaja() {
           .join('')}
       </tbody>
     </table>
+    <div style="display:flex;align-items:center;gap:8px;margin:0 12px 16px;padding:12px;background:#f3ecfa;border-radius:10px">
+      <span style="font-size:13px;color:#5a2ca0;font-weight:600;flex:1">🛵 Ventas DiDi de hoy (captúralo tú, no está integrado todavía)</span>
+      <input type="text" inputmode="decimal" id="input-ventas-didi" placeholder="0.00" style="width:100px;padding:8px;border-radius:6px;border:1px solid #ddd;text-align:right" />
+    </div>
     <button id="btn-cerrar-corte-accion" class="btn-nuevo-pedido" style="margin:0 12px 16px;width:calc(100% - 24px);background:#1a7d3a">Cerrar corte</button>`;
 
+  document.getElementById('input-ventas-didi').addEventListener('input', (e) => {
+    e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+  });
   document.querySelectorAll('.input-contado').forEach((el) => {
     el.addEventListener('input', () => {
       el.value = el.value.replace(/[^0-9.]/g, '');
@@ -1482,6 +1490,7 @@ async function cerrarCorte() {
   document.querySelectorAll('.input-contado').forEach((el) => {
     contado[el.dataset.metodo] = Number(el.value) || 0;
   });
+  const ventas_didi = Number(document.getElementById('input-ventas-didi').value) || 0;
 
   if (!confirm('¿Cerrar el corte del día? Ya no vas a poder registrar más gastos para esta fecha.')) return;
 
@@ -1492,7 +1501,7 @@ async function cerrarCorte() {
   await fetch('/api/corte/cerrar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sucursal_id, fecha, contado }),
+    body: JSON.stringify({ sucursal_id, fecha, contado, ventas_didi }),
   });
 
   cargarCorte();
