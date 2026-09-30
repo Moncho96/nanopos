@@ -30,14 +30,17 @@ function normalizarSlug(nombre) {
 
 async function cargarInicial() {
   state.sucursales = await fetch('/api/sucursales').then((r) => r.json());
-  state.categorias = await fetch('/api/categorias').then((r) => r.json());
-  state.productos = await fetch('/api/productos').then((r) => r.json());
 
   const select = document.getElementById('sucursal-select');
   select.innerHTML = state.sucursales.map((s) => `<option value="${s.id}">${s.nombre}</option>`).join('');
   select.addEventListener('change', async () => {
     state.envios = await fetch(`/api/envios?sucursal_id=${select.value}`).then((r) => r.json());
     renderColoniaOptions();
+    state.categorias = await fetch(`/api/categorias?sucursal_id=${select.value}`).then((r) => r.json());
+    state.productos = await fetch(`/api/productos?sucursal_id=${select.value}`).then((r) => r.json());
+    state.categoriaActiva = state.categorias[0]?.id ?? null;
+    renderCatTabs();
+    renderProductos();
   });
 
   // Si el link trae ?sucursal=santa-maria (o el id numérico), se fija esa sucursal
@@ -56,6 +59,11 @@ async function cargarInicial() {
       fijaEl.style.display = 'block';
     }
   }
+
+  // El menú (categorías/productos) es independiente por sucursal — se carga hasta
+  // aquí, ya con la sucursal resuelta.
+  state.categorias = await fetch(`/api/categorias?sucursal_id=${select.value}`).then((r) => r.json());
+  state.productos = await fetch(`/api/productos?sucursal_id=${select.value}`).then((r) => r.json());
 
   state.envios = await fetch(`/api/envios?sucursal_id=${select.value}`).then((r) => r.json());
   renderColoniaOptions();
