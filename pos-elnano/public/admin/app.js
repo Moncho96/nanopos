@@ -2028,6 +2028,7 @@ function renderProductosAdmin() {
         <button class="btn-eliminar-fila" data-guardar="${p.id}" title="Guardar">💾</button>
         <button class="btn-eliminar-fila" data-toggle="${p.id}" title="${p.disponible ? 'Ocultar del menú' : 'Mostrar en el menú'}">${p.disponible ? '👁️' : '🚫'}</button>
         <button class="btn-eliminar-fila" data-receta="${p.id}" title="Receta">📋</button>
+        <button class="btn-eliminar-fila" data-borrar-definitivo="${p.id}" data-nombre="${p.nombre}" title="Borrar definitivamente">🗑️</button>
       </td>
     </tr>`
     )
@@ -2050,6 +2051,9 @@ function renderProductosAdmin() {
   });
   document.querySelectorAll('[data-receta]').forEach((btn) => {
     btn.addEventListener('click', () => abrirModalReceta(Number(btn.dataset.receta)));
+  });
+  document.querySelectorAll('[data-borrar-definitivo]').forEach((btn) => {
+    btn.addEventListener('click', () => borrarProductoDefinitivo(Number(btn.dataset.borrarDefinitivo), btn.dataset.nombre));
   });
   document.querySelectorAll('.prod-admin-precio').forEach((el) => {
     el.addEventListener('input', () => {
@@ -2134,6 +2138,19 @@ async function guardarProductoAdmin(productoId) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ nombre, categoria_id, precio }),
   });
+  await recargarCategoriasYProductos();
+  renderProductosAdmin();
+}
+
+async function borrarProductoDefinitivo(productoId, nombre) {
+  if (!confirm(`¿Borrar "${nombre}" DEFINITIVAMENTE del menú? Esto no se puede deshacer.\n\nSi ya se usó en algún pedido, no se va a poder borrar — solo ocultar (para eso usa el botón 👁️/🚫 en vez de este).`)) return;
+
+  const resp = await fetch(`/api/productos/${productoId}/definitivo`, { method: 'DELETE' });
+  if (!resp.ok) {
+    const err = await resp.json();
+    alert(err.error || 'No se pudo borrar');
+    return;
+  }
   await recargarCategoriasYProductos();
   renderProductosAdmin();
 }
