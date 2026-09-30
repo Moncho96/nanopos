@@ -155,6 +155,7 @@ app.use((req, res, next) => {
 // Sirve las dos pantallas: /pos (toma de pedidos) y /kds (monitor de cocina)
 app.use('/pos', requiereLogin, express.static(path.join(__dirname, 'public/pos')));
 app.use('/kds', requiereLogin, express.static(path.join(__dirname, 'public/kds')));
+app.use('/admin', requiereLogin, requierePuesto('cajero'), express.static(path.join(__dirname, 'public/admin')));
 app.use('/pedir', express.static(path.join(__dirname, 'public/pedir')));
 app.use('/resena', express.static(path.join(__dirname, 'public/resena')));
 app.get('/', (req, res) => res.redirect('/pos'));
