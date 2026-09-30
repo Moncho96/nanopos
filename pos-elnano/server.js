@@ -851,6 +851,16 @@ app.post('/api/distribuciones', requierePuesto(), async (req, res) => {
      VALUES ($1,$2,$3,$4,$5) RETURNING *`,
     [fecha, socio.trim(), monto, metodo_pago || null, nota || null]
   );
+
+  // Si existe el sobre de "Utilidad" en Profit First, este reparto se descuenta de ahí solo
+  const { rows: categoriaUtilidad } = await pool.query(`SELECT id FROM profit_first_categorias WHERE nombre = 'Utilidad'`);
+  if (categoriaUtilidad.length) {
+    await pool.query(
+      `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion) VALUES ($1,'gasto',$2,$3)`,
+      [categoriaUtilidad[0].id, monto, `Reparto a ${socio.trim()} (${fecha})`]
+    );
+  }
+
   res.json(rows[0]);
 });
 
@@ -1259,6 +1269,56 @@ app.patch('/api/pedidos/:id/liquidar-entrega', requierePuesto('cajero'), verific
   const pedidoCompleto = await obtenerPedidoCompleto(id);
   io.to(`sucursal_${pedidoCompleto.sucursal_id}`).emit('pedido_actualizado', pedidoCompleto);
   res.json(pedidoCompleto);
+});
+
+// ---------- Profit First ----------
+app.get('/api/profit-first/categorias', requierePuesto(), async (req, res) => {
+  const { rows: categorias } = await pool.query('SELECT * FROM profit_first_categorias ORDER BY orden');
+  const { rows: saldos } = await pool.query(
+    `SELECT categoria_id,
+            COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE -monto END), 0) AS saldo
+     FROM profit_first_movimientos GROUP BY categoria_id`
+  );
+  const saldoPorCategoria = {};
+  saldos.forEach((s) => (saldoPorCategoria[s.categoria_id] = Number(s.saldo)));
+
+  res.json(categorias.map((c) => ({ ...c, saldo: saldoPorCategoria[c.id] || 0 })));
+});
+
+app.patch('/api/profit-first/categorias/:id', requierePuesto(), async (req, res) => {
+  const { porcentaje, nombre } = req.body;
+  const { rows } = await pool.query(
+    'UPDATE profit_first_categorias SET porcentaje = COALESCE($1, porcentaje), nombre = COALESCE($2, nombre) WHERE id = $3 RETURNING *',
+    [porcentaje, nombre, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'Categoría no encontrada' });
+  res.json(rows[0]);
+});
+
+app.post('/api/profit-first/gastos', requierePuesto(), async (req, res) => {
+  const { categoria_id, monto, descripcion } = req.body;
+  if (!categoria_id || !monto) return res.status(400).json({ error: 'Falta la categoría o el monto' });
+  const { rows } = await pool.query(
+    `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion) VALUES ($1,'gasto',$2,$3) RETURNING *`,
+    [categoria_id, monto, descripcion || null]
+  );
+  res.json(rows[0]);
+});
+
+app.get('/api/profit-first/movimientos', requierePuesto(), async (req, res) => {
+  const { categoria_id } = req.query;
+  const { rows } = await pool.query(
+    categoria_id
+      ? `SELECT m.*, c.nombre AS categoria_nombre FROM profit_first_movimientos m JOIN profit_first_categorias c ON c.id = m.categoria_id WHERE m.categoria_id = $1 ORDER BY m.creado_en DESC LIMIT 100`
+      : `SELECT m.*, c.nombre AS categoria_nombre FROM profit_first_movimientos m JOIN profit_first_categorias c ON c.id = m.categoria_id ORDER BY m.creado_en DESC LIMIT 100`,
+    categoria_id ? [categoria_id] : []
+  );
+  res.json(rows);
+});
+
+app.delete('/api/profit-first/movimientos/:id', requierePuesto(), async (req, res) => {
+  await pool.query(`DELETE FROM profit_first_movimientos WHERE id = $1 AND tipo = 'gasto'`, [req.params.id]);
+  res.json({ ok: true });
 });
 
 // ---------- Clientes ----------
@@ -2241,7 +2301,24 @@ app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
     ]
   );
 
-  res.json(rows[0]);
+  const corteGuardado = rows[0];
+
+  // Reparte el total contado a los sobres de Profit First según su porcentaje. Si este
+  // corte ya se había cerrado antes (se está corrigiendo), borra el reparto viejo primero
+  // para no duplicarlo.
+  await pool.query(`DELETE FROM profit_first_movimientos WHERE corte_id = $1 AND tipo = 'ingreso'`, [corteGuardado.id]);
+  const { rows: categoriasPF } = await pool.query('SELECT * FROM profit_first_categorias ORDER BY orden');
+  for (const cat of categoriasPF) {
+    const monto = Number((totalContado * (Number(cat.porcentaje) / 100)).toFixed(2));
+    if (monto > 0) {
+      await pool.query(
+        `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, corte_id) VALUES ($1,'ingreso',$2,$3,$4)`,
+        [cat.id, monto, `Corte del ${fecha}`, corteGuardado.id]
+      );
+    }
+  }
+
+  res.json(corteGuardado);
 });
 
 // ---------- Costos de envío por colonia ----------
