@@ -13,10 +13,13 @@ const state = {
   categorias: [],
   productos: [],
   envios: [],
+  recompensas: [],
   categoriaActiva: null,
-  tipo: 'para_llevar',
+  tipo: null,
   carrito: [],
   costoEnvio: 0,
+  clienteDetectado: null,
+  recompensaElegidaId: null,
 };
 
 function normalizarSlug(nombre) {
@@ -113,17 +116,17 @@ function renderProductos() {
   });
 }
 
-document.querySelectorAll('.tipo-tabs button').forEach((btn) => {
+document.querySelectorAll('.tipo-servicio-btn').forEach((btn) => {
   btn.addEventListener('click', () => {
     state.tipo = btn.dataset.tipo;
-    document.querySelectorAll('.tipo-tabs button').forEach((b) => b.classList.remove('active'));
-    btn.classList.add('active');
+    document.querySelectorAll('.tipo-servicio-btn').forEach((b) => b.classList.remove('selected'));
+    btn.classList.add('selected');
     document.getElementById('campos-domicilio').style.display = state.tipo === 'domicilio' ? 'block' : 'none';
     if (state.tipo !== 'domicilio') {
       state.costoEnvio = 0;
       document.getElementById('envio-info-web').style.display = 'none';
-      actualizarTotalWeb();
     }
+    actualizarTotalWeb();
   });
 });
 
@@ -151,6 +154,74 @@ document.getElementById('cliente-colonia').addEventListener('change', () => {
   }
   actualizarTotalWeb();
 });
+
+// ---------- Detectar cliente conocido y sus puntos de lealtad ----------
+
+let telefonoWebTimeout = null;
+document.getElementById('cliente-telefono').addEventListener('input', () => {
+  clearTimeout(telefonoWebTimeout);
+  state.clienteDetectado = null;
+  state.recompensaElegidaId = null;
+  document.getElementById('cliente-encontrado-web').style.display = 'none';
+  document.getElementById('lealtad-web').style.display = 'none';
+  telefonoWebTimeout = setTimeout(buscarClienteWeb, 400);
+});
+
+async function buscarClienteWeb() {
+  const telefono = document.getElementById('cliente-telefono').value.trim();
+  if (telefono.length < 10) return;
+
+  const cliente = await fetch(`/api/clientes/consulta-publica?telefono=${encodeURIComponent(telefono)}`).then((r) => r.json());
+  if (!cliente) return;
+
+  state.clienteDetectado = cliente;
+  if (cliente.nombre && !document.getElementById('cliente-nombre').value.trim()) {
+    document.getElementById('cliente-nombre').value = cliente.nombre;
+  }
+  const encontradoEl = document.getElementById('cliente-encontrado-web');
+  encontradoEl.textContent = `👋 ¡Qué bueno verte de nuevo, ${cliente.nombre || ''}!`;
+  encontradoEl.style.display = 'block';
+
+  if (Number(cliente.puntos) > 0) {
+    if (!state.recompensas.length) {
+      state.recompensas = await fetch('/api/recompensas').then((r) => r.json());
+    }
+    renderLealtadWeb(cliente);
+  }
+}
+
+function renderLealtadWeb(cliente) {
+  const disponibles = state.recompensas.filter((r) => r.puntos_requeridos <= Number(cliente.puntos));
+  const lealtadEl = document.getElementById('lealtad-web');
+  document.getElementById('lealtad-puntos-texto').textContent = `Tienes ${cliente.puntos} punto(s) acumulados`;
+
+  if (!disponibles.length) {
+    document.getElementById('lealtad-recompensas-lista').innerHTML =
+      '<div style="font-size:12.5px;color:#888">Todavía no te alcanza para ninguna recompensa — ¡síguele!</div>';
+    lealtadEl.style.display = 'block';
+    return;
+  }
+
+  document.getElementById('lealtad-recompensas-lista').innerHTML = disponibles
+    .map(
+      (r) => `
+    <div class="recompensa-chip-web ${state.recompensaElegidaId === r.id ? 'selected' : ''}" data-recompensa="${r.id}">
+      <span>🎁 ${r.nombre}</span>
+      <span class="puntos-req">${r.puntos_requeridos} pts · −$${Number(r.monto_descuento).toFixed(2)}</span>
+    </div>`
+    )
+    .join('');
+
+  document.querySelectorAll('.recompensa-chip-web').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = Number(el.dataset.recompensa);
+      state.recompensaElegidaId = state.recompensaElegidaId === id ? null : id;
+      renderLealtadWeb(cliente);
+      actualizarTotalWeb();
+    });
+  });
+  lealtadEl.style.display = 'block';
+}
 
 // ---------- Carrito ----------
 
@@ -228,6 +299,9 @@ function renderCartItems() {
 function actualizarTotalWeb() {
   const subtotal = state.carrito.reduce((sum, it) => sum + it.precio * it.cantidad, 0);
   const envio = state.costoEnvio || 0;
+  const recompensa = state.recompensas.find((r) => r.id === state.recompensaElegidaId);
+  const descuento = recompensa ? Number(recompensa.monto_descuento) : 0;
+
   document.getElementById('desglose-web').innerHTML = `
     <div style="display:flex;justify-content:space-between">
       <span>Subtotal productos</span><span>$${subtotal.toFixed(2)}</span>
@@ -238,8 +312,15 @@ function actualizarTotalWeb() {
             <span>🛵 Costo de envío</span><span>$${envio.toFixed(2)}</span>
           </div>`
         : ''
+    }
+    ${
+      descuento > 0
+        ? `<div style="display:flex;justify-content:space-between;color:#a97800;font-weight:600">
+            <span>🎁 Descuento por puntos</span><span>−$${descuento.toFixed(2)}</span>
+          </div>`
+        : ''
     }`;
-  document.getElementById('total-web').textContent = `$${(subtotal + envio).toFixed(2)}`;
+  document.getElementById('total-web').textContent = `$${Math.max(0, subtotal + envio - descuento).toFixed(2)}`;
 }
 
 // ---------- Confirmar pedido ----------
@@ -257,8 +338,12 @@ async function confirmarPedidoWeb() {
     statusEl.textContent = 'Agrega al menos un producto.';
     return;
   }
-  if (!nombre || !telefono) {
-    statusEl.textContent = 'Falta tu nombre o teléfono.';
+  if (!telefono || !nombre) {
+    statusEl.textContent = 'Falta tu teléfono o tu nombre.';
+    return;
+  }
+  if (!state.tipo) {
+    statusEl.textContent = 'Elige si tu pedido es para llevar o a domicilio.';
     return;
   }
   if (state.tipo === 'domicilio' && (!colonia || !direccion)) {
@@ -296,6 +381,7 @@ async function confirmarPedidoWeb() {
         items,
         costo_envio: state.costoEnvio || 0,
         origen: 'web',
+        recompensa_id: state.recompensaElegidaId || undefined,
       }),
     });
 
@@ -316,7 +402,15 @@ async function confirmarPedidoWeb() {
     document.getElementById('overlay-confirmacion').classList.add('abierto');
 
     state.carrito = [];
+    state.tipo = null;
+    state.costoEnvio = 0;
+    state.clienteDetectado = null;
+    state.recompensaElegidaId = null;
     actualizarBarraCarrito();
+    document.querySelectorAll('.tipo-servicio-btn').forEach((b) => b.classList.remove('selected'));
+    document.getElementById('campos-domicilio').style.display = 'none';
+    document.getElementById('cliente-encontrado-web').style.display = 'none';
+    document.getElementById('lealtad-web').style.display = 'none';
     document.getElementById('cliente-nombre').value = '';
     document.getElementById('cliente-telefono').value = '';
     document.getElementById('cliente-direccion').value = '';

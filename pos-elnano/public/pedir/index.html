@@ -19,11 +19,7 @@
   header h1 { font-size: 20px; margin: 0 0 8px; }
   header select { width: 100%; padding: 10px; border-radius: 8px; border: none; font-size: 14px; }
 
-  .tipo-tabs { display: flex; gap: 8px; padding: 12px 16px; background: white; position: sticky; top: 78px; z-index: 19; border-bottom: 1px solid #eee; }
-  .tipo-tabs button { flex: 1; padding: 12px; border-radius: 8px; border: 2px solid #eee; background: white; font-size: 14px; font-weight: bold; cursor: pointer; }
-  .tipo-tabs button.active { border-color: #b8232f; color: #b8232f; background: #fdf1f1; }
-
-  .cat-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 12px 16px; background: white; position: sticky; top: 138px; z-index: 18; }
+  .cat-tabs { display: flex; gap: 8px; overflow-x: auto; padding: 12px 16px; background: white; position: sticky; top: 78px; z-index: 18; }
   .cat-tab { flex: 0 0 auto; padding: 8px 14px; border-radius: 20px; background: #f0f0f0; font-size: 13px; font-weight: 600; color: #555; cursor: pointer; white-space: nowrap; }
   .cat-tab.active { background: #b8232f; color: white; }
 
@@ -51,6 +47,20 @@
   .checkout-form input, .checkout-form select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; margin-bottom: 10px; }
   .checkout-form label { font-size: 13px; color: #666; display: block; margin-bottom: 4px; }
   #envio-info-web { font-size: 13px; color: #1a7d3a; font-weight: 600; margin: -6px 0 12px; display: none; }
+
+  .seccion-checkout { margin-top: 22px; }
+  .seccion-checkout .titulo-seccion { font-size: 13px; font-weight: 700; text-transform: uppercase; color: #999; letter-spacing: .5px; margin-bottom: 10px; }
+  #cliente-encontrado-web { display: none; background: #fff8e1; color: #a97800; border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 10px; }
+  #lealtad-web { display: none; background: #f3ecfa; border-radius: 10px; padding: 12px; margin-top: 10px; }
+  #lealtad-web .lealtad-titulo { font-weight: 700; color: #5a2ca0; font-size: 13px; margin-bottom: 8px; }
+  .recompensa-chip-web { display: flex; justify-content: space-between; align-items: center; background: white; border: 2px solid #ddd; border-radius: 8px; padding: 10px 12px; margin-bottom: 6px; cursor: pointer; font-size: 13px; }
+  .recompensa-chip-web.selected { border-color: #5a2ca0; background: #f3ecfa; }
+  .recompensa-chip-web .puntos-req { color: #888; font-size: 12px; }
+
+  .tipo-servicio-grid { display: flex; gap: 10px; }
+  .tipo-servicio-btn { flex: 1; padding: 16px 10px; border-radius: 10px; border: 2px solid #eee; background: white; font-size: 14px; font-weight: bold; cursor: pointer; text-align: center; }
+  .tipo-servicio-btn.selected { border-color: #b8232f; color: #b8232f; background: #fdf1f1; }
+  .tipo-servicio-btn .emoji-tipo { font-size: 26px; display: block; margin-bottom: 4px; }
 
   .total-linea { display: flex; justify-content: space-between; font-size: 20px; font-weight: bold; margin: 16px 0; padding-top: 12px; border-top: 2px solid #eee; }
   .btn-confirmar { width: 100%; padding: 16px; background: #1a7d3a; color: white; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer; }
@@ -90,11 +100,6 @@
   <div id="sucursal-fija" style="display:none;font-size:15px;font-weight:600;margin-top:2px">📍</div>
 </header>
 
-<div class="tipo-tabs">
-  <button class="active" data-tipo="para_llevar">🥡 Para llevar</button>
-  <button data-tipo="domicilio">🛵 A domicilio</button>
-</div>
-
 <div class="cat-tabs" id="cat-tabs"></div>
 <div class="productos-grid" id="productos-grid"></div>
 
@@ -111,12 +116,28 @@
   <div class="overlay-body">
     <div id="cart-items"></div>
 
-    <div class="checkout-form" style="margin-top:20px">
-      <label>Nombre *</label>
-      <input type="text" id="cliente-nombre" placeholder="Tu nombre" />
-      <label>Teléfono *</label>
-      <input type="tel" id="cliente-telefono" placeholder="10 dígitos" />
-      <div id="campos-domicilio" style="display:none">
+    <div class="seccion-checkout">
+      <div class="titulo-seccion">Tus datos</div>
+      <div class="checkout-form">
+        <label>Teléfono *</label>
+        <input type="tel" id="cliente-telefono" placeholder="10 dígitos" />
+        <div id="cliente-encontrado-web"></div>
+        <label>Nombre *</label>
+        <input type="text" id="cliente-nombre" placeholder="Tu nombre" />
+      </div>
+      <div id="lealtad-web">
+        <div class="lealtad-titulo">⭐ <span id="lealtad-puntos-texto"></span></div>
+        <div id="lealtad-recompensas-lista"></div>
+      </div>
+    </div>
+
+    <div class="seccion-checkout">
+      <div class="titulo-seccion">¿Cómo quieres tu pedido?</div>
+      <div class="tipo-servicio-grid">
+        <button class="tipo-servicio-btn" data-tipo="para_llevar"><span class="emoji-tipo">🥡</span>Para llevar</button>
+        <button class="tipo-servicio-btn" data-tipo="domicilio"><span class="emoji-tipo">🛵</span>A domicilio</button>
+      </div>
+      <div id="campos-domicilio" class="checkout-form" style="display:none;margin-top:12px">
         <label>Colonia *</label>
         <select id="cliente-colonia"><option value="">Selecciona colonia</option></select>
         <div id="envio-info-web"></div>
