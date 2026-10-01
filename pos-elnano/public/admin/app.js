@@ -489,9 +489,57 @@ const PF_SLUG = {
   'Opex': 'opex', 'Nómina': 'nomina', 'Impuestos': 'impuestos', 'Utilidad': 'utilidad',
   'Sueldo dueño': 'sueldo-dueno', 'Renta': 'renta', 'Aguinaldo': 'aguinaldo',
 };
+let profitFirstCache = [];
+
+function abrirModalConfigPF(categoriaId) {
+  const cat = profitFirstCache.find((c) => c.id === categoriaId);
+  if (!cat) return;
+
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-config-pf">
+      <div class="modal-box">
+        <h3>⚙️ ${escapeHtml(cat.nombre)}</h3>
+        <label>Porcentaje del corte que le toca</label>
+        <input type="text" inputmode="decimal" id="config-pf-porcentaje" value="${cat.porcentaje}" />
+        <label style="margin-top:14px">Tope (opcional)</label>
+        <input type="text" inputmode="decimal" id="config-pf-limite" placeholder="Déjalo vacío para que sea libre" value="${cat.limite ?? ''}" />
+        <div class="helptext">Si le pones un tope, el reparto automático deja de meterle dinero a esta categoría en cuanto llegue a ese monto. Vacío = sigue sumando sin límite.</div>
+        <div class="modal-botones" style="margin-top:16px">
+          <button class="btn-cancelar" id="btn-cerrar-config-pf">Cancelar</button>
+          <button class="btn-agregar" id="btn-guardar-config-pf">Guardar</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  document.getElementById('config-pf-porcentaje').addEventListener('input', (e) => {
+    e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+  });
+  document.getElementById('config-pf-limite').addEventListener('input', (e) => {
+    e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+  });
+  document.getElementById('modal-overlay-config-pf').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-config-pf') document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-cerrar-config-pf').addEventListener('click', () => {
+    document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-guardar-config-pf').addEventListener('click', async () => {
+    const porcentaje = document.getElementById('config-pf-porcentaje').value;
+    const limiteTexto = document.getElementById('config-pf-limite').value.trim();
+    await fetch(`/api/profit-first/categorias/${categoriaId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ porcentaje, limite: limiteTexto || null }),
+    });
+    document.getElementById('modal-container').innerHTML = '';
+    cargarProfitFirst();
+  });
+}
 
 async function cargarProfitFirst() {
   const categorias = await fetch('/api/profit-first/categorias').then((r) => r.json());
+  profitFirstCache = categorias;
 
   const sumaPorcentajes = categorias.reduce((s, c) => s + Number(c.porcentaje), 0);
   const totalEl = document.getElementById('pf-total-porcentaje');
@@ -501,21 +549,29 @@ async function cargarProfitFirst() {
   document.getElementById('pf-categorias').innerHTML = categorias
     .map((c) => {
       const slug = PF_SLUG[c.nombre] || 'opex';
+      const saldo = Number(c.saldo);
+      const tieneLimite = c.limite !== null && c.limite !== undefined;
+      const porcentajeLleno = tieneLimite ? Math.min(100, Math.max(0, (saldo / Number(c.limite)) * 100)) : 0;
       return `
     <div class="pf-ticket pf-caja-card ${slug}">
       <div class="tt">
-        <span class="pf-chip ${slug}">${escapeHtml(c.nombre)}</span>
-        <span class="pf-big ${c.saldo < 0 ? 'pf-neg' : 'pf-pos'}">$${Number(c.saldo).toFixed(2)}</span>
+        <span class="pf-chip ${slug}">${escapeHtml(c.nombre)} · ${c.porcentaje}%</span>
+        <button class="btn-eliminar-fila" data-config-pf="${c.id}" title="Configurar">⚙️</button>
       </div>
-      <label>Porcentaje</label>
-      <div style="display:flex;gap:8px;align-items:center">
-        <input type="text" inputmode="decimal" class="pf-porcentaje-edit" data-id="${c.id}" value="${c.porcentaje}" style="width:70px" />
-        <span style="font-size:13px;color:var(--ink-soft)">%</span>
-        <button class="btn-eliminar-fila" data-guardar-pf="${c.id}" title="Guardar porcentaje" style="margin-left:auto">💾</button>
+      <div class="pf-big ${saldo < 0 ? 'pf-neg' : 'pf-pos'}">$${saldo.toFixed(2)}</div>
+      ${
+        tieneLimite
+          ? `<div style="background:var(--line);height:6px;border-radius:3px;margin-top:6px;overflow:hidden">
+               <div class="pf-chip ${slug}" style="display:block;padding:0;border-radius:0;height:100%;width:${porcentajeLleno}%"></div>
+             </div>
+             <div style="font-size:11px;color:var(--ink-soft);margin-top:3px">Tope: $${Number(c.limite).toFixed(2)} (${porcentajeLleno.toFixed(0)}%)</div>`
+          : `<div style="font-size:11px;color:var(--ink-soft);margin-top:4px">Libre, sin tope</div>`
+      }
+      <div style="display:flex;gap:6px;margin-top:12px">
+        <button class="pf-btn secondary" style="margin-top:0;flex:1" data-toggle-movimiento-pf="${c.id}">+ Movimiento</button>
+        <button class="btn-eliminar-fila" data-ver-historial-pf="${c.id}" data-nombre-pf="${escapeHtml(c.nombre)}" title="Ver historial">📋</button>
       </div>
-      <div class="pf-zigzag"></div>
-      <div style="padding-top:14px">
-        <label>Registrar movimiento</label>
+      <div id="pf-form-${c.id}" style="display:none;margin-top:10px">
         <div style="display:flex;gap:6px;margin-bottom:6px">
           <input type="text" inputmode="decimal" class="pf-gasto-monto" data-id="${c.id}" placeholder="Monto" style="width:90px" />
           <input type="text" class="pf-gasto-desc" data-id="${c.id}" placeholder="Descripción" style="flex:1" />
@@ -523,28 +579,25 @@ async function cargarProfitFirst() {
         <div style="display:flex;gap:6px">
           <button class="pf-btn danger" style="margin-top:0;flex:1" data-registrar-gasto-pf="${c.id}">− Gasto</button>
           <button class="pf-btn secondary" style="margin-top:0;flex:1" data-registrar-ingreso-pf="${c.id}">+ Ingreso</button>
-          <button class="btn-eliminar-fila" data-ver-historial-pf="${c.id}" data-nombre-pf="${escapeHtml(c.nombre)}" title="Ver historial">📋</button>
         </div>
       </div>
     </div>`;
     })
     .join('');
 
-  document.querySelectorAll('.pf-porcentaje-edit, .pf-gasto-monto').forEach((el) => {
-    el.addEventListener('input', () => {
-      el.value = el.value.replace(/[^0-9.]/g, '');
+  document.querySelectorAll('[data-toggle-movimiento-pf]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const form = document.getElementById(`pf-form-${btn.dataset.toggleMovimientoPf}`);
+      form.style.display = form.style.display === 'none' ? 'block' : 'none';
     });
   });
-  document.querySelectorAll('[data-guardar-pf]').forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const id = btn.dataset.guardarPf;
-      const porcentaje = document.querySelector(`.pf-porcentaje-edit[data-id="${id}"]`).value;
-      await fetch(`/api/profit-first/categorias/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ porcentaje }),
-      });
-      cargarProfitFirst();
+  document.querySelectorAll('[data-config-pf]').forEach((btn) => {
+    btn.addEventListener('click', () => abrirModalConfigPF(Number(btn.dataset.configPf)));
+  });
+
+  document.querySelectorAll('.pf-gasto-monto').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
     });
   });
   document.querySelectorAll('[data-registrar-gasto-pf]').forEach((btn) => {
