@@ -1218,6 +1218,43 @@ app.delete('/api/etiquetas/:id', requierePuesto(), async (req, res) => {
 });
 
 // ---------- Repartidores y control de entregas a domicilio ----------
+
+// Ranking de repartidores: cuántos pedidos se llevó cada quien en un rango de fechas,
+// y el desglose día por día — para premiar a quien más lleve.
+app.get('/api/repartidores/desempeno', requierePuesto('cajero'), async (req, res) => {
+  const { sucursal_id, fecha_desde, fecha_hasta } = req.query;
+  if (!fecha_desde || !fecha_hasta) return res.status(400).json({ error: 'Falta el rango de fechas' });
+
+  const filtroSucursal = sucursal_id ? ' AND p.sucursal_id = $3' : '';
+  const paramsBase = sucursal_id ? [fecha_desde, fecha_hasta, sucursal_id] : [fecha_desde, fecha_hasta];
+
+  const { rows: ranking } = await pool.query(
+    `SELECT r.id, r.nombre, COUNT(p.id)::int AS total_pedidos, COALESCE(SUM(p.total),0) AS total_vendido
+     FROM repartidores r
+     LEFT JOIN pedidos p ON p.repartidor_id = r.id AND p.cancelado = false
+       AND ${fechaNegocioSQL('p.asignado_en')} BETWEEN $1 AND $2${filtroSucursal}
+     WHERE r.activo = true
+     GROUP BY r.id, r.nombre
+     ORDER BY total_pedidos DESC, r.nombre`,
+    paramsBase
+  );
+
+  const { rows: porDia } = await pool.query(
+    `SELECT r.id AS repartidor_id, ${fechaNegocioSQL('p.asignado_en')} AS dia, COUNT(*)::int AS cantidad
+     FROM pedidos p JOIN repartidores r ON r.id = p.repartidor_id
+     WHERE p.cancelado = false AND p.repartidor_id IS NOT NULL
+       AND ${fechaNegocioSQL('p.asignado_en')} BETWEEN $1 AND $2${filtroSucursal}
+     GROUP BY r.id, dia
+     ORDER BY dia`,
+    paramsBase
+  );
+
+  res.json({
+    ranking: ranking.map((r) => ({ id: r.id, nombre: r.nombre, totalPedidos: r.total_pedidos, totalVendido: Number(r.total_vendido) })),
+    porDia: porDia.map((r) => ({ repartidorId: r.repartidor_id, dia: r.dia, cantidad: r.cantidad })),
+  });
+});
+
 app.get('/api/repartidores', async (req, res) => {
   const { todos } = req.query;
   const { rows } = await pool.query(
