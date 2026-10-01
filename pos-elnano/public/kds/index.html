@@ -15,6 +15,7 @@
   body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #1a1a1a; color: white; }
   header { background: #b8232f; padding: 12px 16px; display: flex; justify-content: space-between; align-items: center; }
   header h1 { font-size: 18px; margin: 0; }
+  .logo-header { height: 30px; width: 30px; border-radius: 50%; vertical-align: middle; margin-right: 6px; object-fit: cover; }
   select { padding: 8px; border-radius: 6px; border: none; font-size: 14px; }
   .board { display: flex; gap: 12px; padding: 12px; overflow-x: auto; }
   .columna { flex: 1; min-width: 280px; }
@@ -41,7 +42,7 @@
 </head>
 <body>
 <header>
-  <h1>👨‍🍳 El Nano — Cocina</h1>
+  <h1><img src="logo.png" class="logo-header" alt="El Nano" /> Cocina</h1>
   <div style="display:flex;gap:8px;align-items:center">
     <select id="sucursal-select"></select>
     <button id="btn-ir-pos" title="Ir a Pedidos" style="background:rgba(255,255,255,0.15);border:none;color:white;width:36px;height:36px;border-radius:8px;font-size:16px;cursor:pointer">📝</button>
@@ -66,6 +67,7 @@
 </div>
 
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="temporada.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
