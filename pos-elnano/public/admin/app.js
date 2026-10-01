@@ -485,39 +485,49 @@ async function abrirHistorialProfitFirst(categoriaId, nombreCategoria) {
   });
 }
 
+const PF_SLUG = {
+  'Opex': 'opex', 'Nómina': 'nomina', 'Impuestos': 'impuestos', 'Utilidad': 'utilidad',
+  'Sueldo dueño': 'sueldo-dueno', 'Renta': 'renta', 'Aguinaldo': 'aguinaldo',
+};
+
 async function cargarProfitFirst() {
   const categorias = await fetch('/api/profit-first/categorias').then((r) => r.json());
 
   const sumaPorcentajes = categorias.reduce((s, c) => s + Number(c.porcentaje), 0);
   const totalEl = document.getElementById('pf-total-porcentaje');
   totalEl.textContent = `Suma de porcentajes: ${sumaPorcentajes.toFixed(1)}%`;
-  totalEl.style.color = Math.abs(sumaPorcentajes - 100) < 0.1 ? '#1a7d3a' : '#a97800';
+  totalEl.style.color = Math.abs(sumaPorcentajes - 100) < 0.1 ? '#4f7942' : '#c98a2c';
 
   document.getElementById('pf-categorias').innerHTML = categorias
-    .map(
-      (c) => `
-    <div style="background:white;border-radius:12px;padding:14px;margin-bottom:10px">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-        <strong>${escapeHtml(c.nombre)}</strong>
-        <span style="font-size:20px;font-weight:bold;color:${c.saldo < 0 ? '#b8232f' : '#1a7d3a'}">$${Number(c.saldo).toFixed(2)}</span>
+    .map((c) => {
+      const slug = PF_SLUG[c.nombre] || 'opex';
+      return `
+    <div class="pf-ticket pf-caja-card ${slug}">
+      <div class="tt">
+        <span class="pf-chip ${slug}">${escapeHtml(c.nombre)}</span>
+        <span class="pf-big ${c.saldo < 0 ? 'pf-neg' : 'pf-pos'}">$${Number(c.saldo).toFixed(2)}</span>
       </div>
-      <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px">
-        <span style="font-size:12px;color:#888">Porcentaje:</span>
-        <input type="text" inputmode="decimal" class="pf-porcentaje-edit" data-id="${c.id}" value="${c.porcentaje}" style="width:60px;padding:5px;border-radius:6px;border:1px solid #ddd;text-align:center" />
-        <span style="font-size:12px;color:#888">%</span>
-        <button class="btn-eliminar-fila" data-guardar-pf="${c.id}" title="Guardar porcentaje">💾</button>
+      <label>Porcentaje</label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input type="text" inputmode="decimal" class="pf-porcentaje-edit" data-id="${c.id}" value="${c.porcentaje}" style="width:70px" />
+        <span style="font-size:13px;color:var(--ink-soft)">%</span>
+        <button class="btn-eliminar-fila" data-guardar-pf="${c.id}" title="Guardar porcentaje" style="margin-left:auto">💾</button>
       </div>
-      <div style="display:flex;gap:6px;margin-bottom:6px">
-        <input type="text" inputmode="decimal" class="pf-gasto-monto" data-id="${c.id}" placeholder="Monto" style="width:80px;padding:6px;border-radius:6px;border:1px dashed #ccc" />
-        <input type="text" class="pf-gasto-desc" data-id="${c.id}" placeholder="Descripción" style="flex:1;padding:6px;border-radius:6px;border:1px dashed #ccc" />
+      <div class="pf-zigzag"></div>
+      <div style="padding-top:14px">
+        <label>Registrar movimiento</label>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <input type="text" inputmode="decimal" class="pf-gasto-monto" data-id="${c.id}" placeholder="Monto" style="width:90px" />
+          <input type="text" class="pf-gasto-desc" data-id="${c.id}" placeholder="Descripción" style="flex:1" />
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="pf-btn danger" style="margin-top:0;flex:1" data-registrar-gasto-pf="${c.id}">− Gasto</button>
+          <button class="pf-btn secondary" style="margin-top:0;flex:1" data-registrar-ingreso-pf="${c.id}">+ Ingreso</button>
+          <button class="btn-eliminar-fila" data-ver-historial-pf="${c.id}" data-nombre-pf="${escapeHtml(c.nombre)}" title="Ver historial">📋</button>
+        </div>
       </div>
-      <div style="display:flex;gap:6px">
-        <button class="btn-eliminar-fila" data-registrar-gasto-pf="${c.id}" style="flex:1">− Gasto</button>
-        <button class="btn-eliminar-fila" data-registrar-ingreso-pf="${c.id}" style="flex:1;color:#1a7d3a">+ Ingreso (corrección)</button>
-        <button class="btn-eliminar-fila" data-ver-historial-pf="${c.id}" data-nombre-pf="${escapeHtml(c.nombre)}" title="Ver historial">📋</button>
-      </div>
-    </div>`
-    )
+    </div>`;
+    })
     .join('');
 
   document.querySelectorAll('.pf-porcentaje-edit, .pf-gasto-monto').forEach((el) => {

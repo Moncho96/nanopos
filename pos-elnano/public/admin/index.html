@@ -262,6 +262,80 @@
   .admin-tile .nombre { font-size: 13px; font-weight: 600; color: #333; }
   body.dark .admin-tile { background: #1e1e1e; color: #eee; }
   body.dark .admin-tile .nombre { color: #eee; }
+
+  /* ---- Profit First: estilo "ticket de caja chica" ---- */
+  #overlay-profit-first {
+    --paper: #efe7d5; --paper-dark: #e4d9c0; --ink: #2a231c; --ink-soft: #6b5f4f; --line: #c9bb9d;
+    --peltre: #3c5a6b; --peltre-dark: #2c4350; --achiote: #c98a2c; --achiote-dark: #9c6a1f;
+    --chile: #a63d2f; --chile-dark: #7e2c21; --aguacate: #4f7942; --aguacate-dark: #375a2d;
+    --masa: #8a6d3b; --masa-dark: #6b5329; --vino: #6b3550; --vino-dark: #4a2338;
+    background: var(--paper);
+    background-image: radial-gradient(circle at 1px 1px, rgba(0,0,0,0.035) 1px, transparent 0);
+    background-size: 14px 14px;
+    color: var(--ink);
+    font-family: ui-monospace, "SF Mono", "Courier New", monospace;
+  }
+  #overlay-profit-first .full-overlay-header { background: var(--ink); color: var(--paper); }
+  #overlay-profit-first .pf-ticket {
+    background: #fbf7ec; border: 1px solid var(--ink); box-shadow: 3px 3px 0 rgba(42,35,28,0.15);
+    padding: 16px 16px 14px; margin: 0 12px 16px; position: relative;
+  }
+  #overlay-profit-first .pf-ticket .tt {
+    font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--ink-soft);
+    margin-bottom: 10px; font-weight: 700; display: flex; justify-content: space-between; align-items: center;
+  }
+  #overlay-profit-first .pf-zigzag {
+    height: 8px; margin: 12px -16px -14px;
+    background: linear-gradient(135deg, #fbf7ec 50%, transparent 50%) 0 0, linear-gradient(-135deg, #fbf7ec 50%, transparent 50%) 0 0;
+    background-size: 12px 16px; background-repeat: repeat-x; background-position: bottom;
+  }
+  #overlay-profit-first .pf-caja-card { border-left: 6px solid; padding-left: 12px; }
+  #overlay-profit-first .pf-caja-card.opex { border-color: var(--peltre); }
+  #overlay-profit-first .pf-caja-card.nomina { border-color: var(--achiote); }
+  #overlay-profit-first .pf-caja-card.impuestos { border-color: var(--chile); }
+  #overlay-profit-first .pf-caja-card.utilidad { border-color: var(--aguacate); }
+  #overlay-profit-first .pf-caja-card.sueldo-dueno { border-color: var(--peltre-dark); }
+  #overlay-profit-first .pf-caja-card.renta { border-color: var(--masa); }
+  #overlay-profit-first .pf-caja-card.aguinaldo { border-color: var(--vino); }
+  #overlay-profit-first .pf-chip {
+    display: inline-block; font-size: 10px; letter-spacing: .5px; text-transform: uppercase;
+    padding: 3px 7px; border-radius: 2px; font-weight: 700; color: #fff;
+  }
+  #overlay-profit-first .pf-chip.opex { background: var(--peltre); }
+  #overlay-profit-first .pf-chip.nomina { background: var(--achiote); }
+  #overlay-profit-first .pf-chip.impuestos { background: var(--chile); }
+  #overlay-profit-first .pf-chip.utilidad { background: var(--aguacate); }
+  #overlay-profit-first .pf-chip.sueldo-dueno { background: var(--peltre-dark); }
+  #overlay-profit-first .pf-chip.renta { background: var(--masa); }
+  #overlay-profit-first .pf-chip.aguinaldo { background: var(--vino); }
+  #overlay-profit-first .pf-big { font-size: 26px; font-weight: 800; letter-spacing: -0.5px; }
+  #overlay-profit-first .pf-neg { color: var(--chile-dark); }
+  #overlay-profit-first .pf-pos { color: var(--aguacate-dark); }
+  #overlay-profit-first label {
+    display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--ink-soft); margin: 10px 0 5px; font-weight: 700;
+  }
+  #overlay-profit-first input[type="text"] {
+    width: 100%; padding: 9px 10px; font-family: inherit; font-size: 14px;
+    border: 1px solid var(--ink); background: #fff; color: var(--ink); border-radius: 0;
+  }
+  #overlay-profit-first .pf-btn {
+    display: block; width: 100%; padding: 11px; margin-top: 10px; background: var(--ink); color: #fbf7ec;
+    border: none; font-family: inherit; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+    font-weight: 800; cursor: pointer;
+  }
+  #overlay-profit-first .pf-btn.secondary { background: transparent; color: var(--ink); border: 1px solid var(--ink); }
+  #overlay-profit-first .pf-btn.danger { background: var(--chile-dark); }
+  #overlay-profit-first .pf-hist-item {
+    border-bottom: 1px dashed var(--line); padding: 10px 0;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  body.dark #overlay-profit-first { --paper: #2a241a; --paper-dark: #241f17; --ink: #efe7d5; --ink-soft: #b8ac93; }
+  body.dark #overlay-profit-first .pf-ticket { background: #302a1f; }
+  body.dark #overlay-profit-first .pf-zigzag {
+    background: linear-gradient(135deg, #302a1f 50%, transparent 50%) 0 0, linear-gradient(-135deg, #302a1f 50%, transparent 50%) 0 0;
+    background-size: 12px 16px; background-repeat: repeat-x; background-position: bottom;
+  }
 </style>
 </head>
 <body>
@@ -472,20 +546,24 @@
 <div class="full-overlay" id="overlay-profit-first">
   <div class="full-overlay-header">
     <button id="btn-cerrar-profit-first">✕</button>
-    <span class="titulo">Profit First</span>
+    <span class="titulo">Caja Chica · Profit First</span>
   </div>
-  <div style="padding:12px;font-size:13px;color:#666">
-    Cada vez que cierras un corte de cualquier sucursal, el total contado se reparte solo entre
-    estos sobres según su porcentaje. Ajusta los porcentajes cuando quieras — no tienen que
-    sumar 100% si estás en transición.
+  <div class="pf-ticket" style="margin-top:12px">
+    <div class="tt"><span>El Nano · sistema Profit First</span></div>
+    <div style="font-size:12.5px;line-height:1.5">
+      Cada vez que cierras un corte de cualquier sucursal, el total contado se reparte solo entre
+      estos sobres según su porcentaje. Ajusta los porcentajes cuando quieras — no tienen que
+      sumar 100% si estás en transición.
+    </div>
+    <div class="pf-zigzag"></div>
   </div>
-  <div id="pf-total-porcentaje" style="padding:0 12px 8px;font-size:13px;font-weight:600"></div>
-  <div style="padding:0 12px 12px">
+  <div id="pf-total-porcentaje" style="padding:0 12px 10px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.5px"></div>
+  <div style="padding:0 12px 14px">
     <input type="file" id="pf-archivo-respaldo" accept=".json" style="display:none" />
-    <button id="btn-importar-respaldo-pf" style="width:100%;padding:10px;border-radius:8px;border:1px dashed #999;background:white;color:#555;font-size:13px;cursor:pointer">📥 Importar respaldo del sistema anterior</button>
+    <button id="btn-importar-respaldo-pf" class="pf-btn secondary" style="margin-top:0">📥 Importar respaldo del sistema anterior</button>
     <div id="pf-import-status" style="font-size:12px;margin-top:6px"></div>
   </div>
-  <div id="pf-categorias" style="padding:0 12px 24px"></div>
+  <div id="pf-categorias" style="padding:0 0 24px"></div>
 </div>
 
 <!-- Reparto de utilidades -->
