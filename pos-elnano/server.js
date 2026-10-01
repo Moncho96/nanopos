@@ -127,6 +127,8 @@ const RUTAS_API_PUBLICAS_EXACTAS = new Set([
   'POST /api/resenas',
   'POST /api/clientes',
   'POST /api/pedidos',
+  'GET /api/clientes/consulta-publica',
+  'GET /api/recompensas',
 ]);
 
 function esRutaApiPublica(req) {
@@ -1532,6 +1534,20 @@ app.post('/api/admin/copiar-menu', requierePuesto(), async (req, res) => {
 });
 
 // ---------- Clientes ----------
+
+// Público: para que el cliente en /pedir vea si ya está registrado y cuántos puntos tiene.
+// Solo funciona con el teléfono EXACTO (10 dígitos) y regresa lo mínimo necesario — nada de
+// notas internas ni nada que no sea de él mismo.
+app.get('/api/clientes/consulta-publica', async (req, res) => {
+  const { telefono } = req.query;
+  if (!telefono || telefono.length < 10) return res.json(null);
+  const { rows } = await pool.query(
+    'SELECT nombre, direccion, colonia, puntos FROM clientes WHERE telefono = $1',
+    [telefono]
+  );
+  res.json(rows[0] || null);
+});
+
 app.get('/api/clientes', async (req, res) => {
   const { telefono, buscar } = req.query;
   if (telefono) {
@@ -1808,7 +1824,36 @@ app.post('/api/pedidos', async (req, res) => {
       await ajustarInventarioPorProducto(it.producto_id, it.cantidad, sucursal_id, -1, it.opciones_seleccionadas);
     }
 
-    const pedidoCompleto = { ...pedido, items: itemsConNombre };
+    let pedidoCompleto = { ...pedido, items: itemsConNombre };
+
+    // Si el cliente eligió canjear una recompensa al hacer su pedido en línea, se aplica aquí
+    const recompensa_id = req.body.recompensa_id;
+    if (recompensa_id && cliente_id) {
+      try {
+        const { rows: recompensaRows } = await pool.query('SELECT * FROM recompensas_lealtad WHERE id = $1 AND activo = true', [recompensa_id]);
+        const recompensa = recompensaRows[0];
+        const { rows: clienteRows } = await pool.query('SELECT * FROM clientes WHERE id = $1', [cliente_id]);
+        const cliente = clienteRows[0];
+        if (recompensa && cliente && Number(cliente.puntos) >= recompensa.puntos_requeridos) {
+          await pool.query('UPDATE clientes SET puntos = puntos - $1 WHERE id = $2', [recompensa.puntos_requeridos, cliente.id]);
+          const { rows: canjeRows } = await pool.query(
+            `INSERT INTO canjes_lealtad (cliente_id, pedido_id, recompensa_id, puntos_usados, monto_descuento)
+             VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+            [cliente.id, pedido.id, recompensa.id, recompensa.puntos_requeridos, recompensa.monto_descuento]
+          );
+          await pool.query('UPDATE pedidos SET descuento_lealtad = $1, canje_recompensa_id = $2 WHERE id = $3', [
+            recompensa.monto_descuento,
+            canjeRows[0].id,
+            pedido.id,
+          ]);
+          await recalcularTotalPedido(pedido.id);
+          pedidoCompleto = await obtenerPedidoCompleto(pedido.id);
+        }
+      } catch (errCanje) {
+        console.error('No se pudo aplicar el canje del pedido en línea:', errCanje);
+      }
+    }
+
     // Avisa en tiempo real al monitor de cocina de esa sucursal
     io.to(`sucursal_${sucursal_id}`).emit('nuevo_pedido', pedidoCompleto);
 
