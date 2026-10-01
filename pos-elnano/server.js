@@ -1221,6 +1221,64 @@ app.delete('/api/etiquetas/:id', requierePuesto(), async (req, res) => {
 
 // Ranking de repartidores: cuántos pedidos se llevó cada quien en un rango de fechas,
 // y el desglose día por día — para premiar a quien más lleve.
+// ---------- Premios semanales a repartidores ----------
+app.get('/api/premios/config', requierePuesto('cajero'), async (req, res) => {
+  const { rows } = await pool.query('SELECT * FROM premios_repartidores_config WHERE id = 1');
+  res.json(rows[0]);
+});
+
+app.patch('/api/premios/config', requierePuesto(), async (req, res) => {
+  const { primer_lugar, segundo_lugar, tercer_lugar } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE premios_repartidores_config SET
+       primer_lugar = COALESCE($1, primer_lugar),
+       segundo_lugar = COALESCE($2, segundo_lugar),
+       tercer_lugar = COALESCE($3, tercer_lugar)
+     WHERE id = 1 RETURNING *`,
+    [primer_lugar, segundo_lugar, tercer_lugar]
+  );
+  res.json(rows[0]);
+});
+
+// Marca un premio como pagado para ese repartidor en ese rango de fechas (no deja pagarlo dos veces)
+app.post('/api/premios/registrar-pago', requierePuesto('cajero'), async (req, res) => {
+  const { repartidor_id, fecha_desde, fecha_hasta, lugar, monto, pedidos_esa_semana, registrar_gasto, sucursal_id } = req.body;
+  if (!repartidor_id || !fecha_desde || !fecha_hasta || !lugar || !monto) {
+    return res.status(400).json({ error: 'Faltan datos del premio' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO premios_repartidores_pagados (repartidor_id, fecha_desde, fecha_hasta, lugar, monto, pedidos_esa_semana)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [repartidor_id, fecha_desde, fecha_hasta, lugar, monto, pedidos_esa_semana || 0]
+    );
+
+    if (registrar_gasto && sucursal_id) {
+      const { rows: repRows } = await pool.query('SELECT nombre FROM repartidores WHERE id = $1', [repartidor_id]);
+      await pool.query(
+        `INSERT INTO gastos (sucursal_id, descripcion, monto, metodo_pago) VALUES ($1,$2,$3,'efectivo')`,
+        [sucursal_id, `Premio semanal (lugar ${lugar}) a ${repRows[0]?.nombre || 'repartidor'}`, monto]
+      );
+    }
+
+    res.json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') {
+      return res.status(400).json({ error: 'Ya se registró el premio de este repartidor para este rango de fechas' });
+    }
+    res.status(500).json({ error: 'No se pudo registrar el premio' });
+  }
+});
+
+app.get('/api/premios/pagados', requierePuesto('cajero'), async (req, res) => {
+  const { fecha_desde, fecha_hasta } = req.query;
+  const { rows } = await pool.query(
+    'SELECT * FROM premios_repartidores_pagados WHERE fecha_desde = $1 AND fecha_hasta = $2',
+    [fecha_desde, fecha_hasta]
+  );
+  res.json(rows);
+});
+
 app.get('/api/repartidores/desempeno', requierePuesto('cajero'), async (req, res) => {
   const { sucursal_id, fecha_desde, fecha_hasta } = req.query;
   if (!fecha_desde || !fecha_hasta) return res.status(400).json({ error: 'Falta el rango de fechas' });
