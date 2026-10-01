@@ -1321,9 +1321,15 @@ app.get('/api/profit-first/categorias', requierePuesto(), async (req, res) => {
 
 app.patch('/api/profit-first/categorias/:id', requierePuesto(), async (req, res) => {
   const { porcentaje, nombre } = req.body;
+  const limiteProvisto = Object.prototype.hasOwnProperty.call(req.body, 'limite');
+  const limite = limiteProvisto ? req.body.limite || null : undefined;
   const { rows } = await pool.query(
-    'UPDATE profit_first_categorias SET porcentaje = COALESCE($1, porcentaje), nombre = COALESCE($2, nombre) WHERE id = $3 RETURNING *',
-    [porcentaje, nombre, req.params.id]
+    `UPDATE profit_first_categorias SET
+       porcentaje = COALESCE($1, porcentaje),
+       nombre = COALESCE($2, nombre),
+       limite = CASE WHEN $4 THEN $3 ELSE limite END
+     WHERE id = $5 RETURNING *`,
+    [porcentaje, nombre, limite, limiteProvisto, req.params.id]
   );
   if (!rows.length) return res.status(404).json({ error: 'Categoría no encontrada' });
   res.json(rows[0]);
@@ -2517,7 +2523,20 @@ app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
   const { rows: categoriasPF } = await pool.query('SELECT * FROM profit_first_categorias ORDER BY orden');
   const baseParaProfitFirst = totalContado + ventasDidi;
   for (const cat of categoriasPF) {
-    const monto = Number((baseParaProfitFirst * (Number(cat.porcentaje) / 100)).toFixed(2));
+    let monto = Number((baseParaProfitFirst * (Number(cat.porcentaje) / 100)).toFixed(2));
+
+    // Si la categoría tiene límite (no es "libre"), no dejar que el saldo lo rebase
+    if (monto > 0 && cat.limite) {
+      const { rows: saldoRows } = await pool.query(
+        `SELECT COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE -monto END), 0) AS saldo
+         FROM profit_first_movimientos WHERE categoria_id = $1`,
+        [cat.id]
+      );
+      const saldoActual = Number(saldoRows[0].saldo);
+      const espacioDisponible = Math.max(0, Number(cat.limite) - saldoActual);
+      monto = Math.min(monto, espacioDisponible);
+    }
+
     if (monto > 0) {
       await pool.query(
         `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, corte_id) VALUES ($1,'ingreso',$2,$3,$4)`,
