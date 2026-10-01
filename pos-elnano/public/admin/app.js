@@ -190,6 +190,55 @@ function aplicarPresetFechaRep(preset) {
   cargarDesempenoRepartidores();
 }
 
+document.getElementById('btn-config-premios').addEventListener('click', abrirModalConfigPremios);
+
+async function abrirModalConfigPremios() {
+  const config = await fetch('/api/premios/config').then((r) => r.json());
+
+  const html = `
+    <div class="modal-overlay" id="modal-overlay-premios">
+      <div class="modal-box">
+        <h3>⚙️ Montos del premio semanal</h3>
+        <label>🥇 Primer lugar</label>
+        <input type="text" inputmode="decimal" id="premio-1" value="${config.primer_lugar}" />
+        <label style="margin-top:10px">🥈 Segundo lugar</label>
+        <input type="text" inputmode="decimal" id="premio-2" value="${config.segundo_lugar}" />
+        <label style="margin-top:10px">🥉 Tercer lugar</label>
+        <input type="text" inputmode="decimal" id="premio-3" value="${config.tercer_lugar}" />
+        <div class="modal-botones" style="margin-top:16px">
+          <button class="btn-cancelar" id="btn-cerrar-config-premios">Cancelar</button>
+          <button class="btn-agregar" id="btn-guardar-config-premios">Guardar</button>
+        </div>
+      </div>
+    </div>`;
+  document.getElementById('modal-container').innerHTML = html;
+
+  document.querySelectorAll('#premio-1, #premio-2, #premio-3').forEach((el) => {
+    el.addEventListener('input', () => {
+      el.value = el.value.replace(/[^0-9.]/g, '');
+    });
+  });
+  document.getElementById('modal-overlay-premios').addEventListener('click', (e) => {
+    if (e.target.id === 'modal-overlay-premios') document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-cerrar-config-premios').addEventListener('click', () => {
+    document.getElementById('modal-container').innerHTML = '';
+  });
+  document.getElementById('btn-guardar-config-premios').addEventListener('click', async () => {
+    await fetch('/api/premios/config', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        primer_lugar: document.getElementById('premio-1').value,
+        segundo_lugar: document.getElementById('premio-2').value,
+        tercer_lugar: document.getElementById('premio-3').value,
+      }),
+    });
+    document.getElementById('modal-container').innerHTML = '';
+    cargarDesempenoRepartidores();
+  });
+}
+
 async function cargarDesempenoRepartidores() {
   const desde = document.getElementById('rep-desempeno-desde').value;
   const hasta = document.getElementById('rep-desempeno-hasta').value;
@@ -205,6 +254,9 @@ async function cargarDesempenoRepartidores() {
     return;
   }
   const { ranking, porDia } = await resp.json();
+  const premiosConfig = await fetch('/api/premios/config').then((r) => r.json());
+  const premiosYaPagados = await fetch(`/api/premios/pagados?fecha_desde=${desde}&fecha_hasta=${hasta}`).then((r) => r.json());
+  const montosPorLugar = [Number(premiosConfig.primer_lugar), Number(premiosConfig.segundo_lugar), Number(premiosConfig.tercer_lugar)];
 
   // Arma la lista de días en el rango, para la tabla de desglose
   const dias = [];
@@ -227,7 +279,33 @@ async function cargarDesempenoRepartidores() {
 
   const medallas = ['🥇', '🥈', '🥉'];
 
+  const filasPremio = ranking.slice(0, 3).map((r, i) => {
+    const lugar = i + 1;
+    const monto = montosPorLugar[i];
+    const yaPagado = premiosYaPagados.find((p) => p.repartidor_id === r.id && p.lugar === lugar);
+    return `
+      <div style="display:flex;align-items:center;justify-content:space-between;background:white;border-radius:10px;padding:12px;margin-bottom:8px">
+        <span>${medallas[i]} <strong>${escapeHtml(r.nombre)}</strong> — ${r.totalPedidos} pedidos</span>
+        <span style="display:flex;align-items:center;gap:8px">
+          <strong style="color:#1a7d3a">$${monto.toFixed(2)}</strong>
+          ${
+            yaPagado
+              ? `<span style="font-size:12px;color:#1a7d3a">✅ Pagado</span>`
+              : `<button class="btn-eliminar-fila" data-pagar-premio="${r.id}" data-lugar="${lugar}" data-monto="${monto}" data-pedidos="${r.totalPedidos}" data-nombre="${escapeHtml(r.nombre)}">Marcar pagado</button>`
+          }
+        </span>
+      </div>`;
+  }).join('');
+
+  const seccionPremios = ranking.length
+    ? `<div class="informes-seccion">
+        <h3>🏆 Premio de este rango</h3>
+        ${filasPremio}
+      </div>`
+    : '';
+
   cont.innerHTML = `
+    ${seccionPremios}
     <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
       ${ranking
         .map(
@@ -265,6 +343,36 @@ async function cargarDesempenoRepartidores() {
         </tbody>
       </table>
     </div>`;
+
+  document.querySelectorAll('[data-pagar-premio]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const nombre = btn.dataset.nombre;
+      const monto = Number(btn.dataset.monto);
+      const registrarGasto = confirm(`¿Marcar el premio de $${monto.toFixed(2)} para ${nombre} como pagado?\n\nAceptar = sí, y de paso registrarlo como gasto en el corte.\nCancelar = no hacer nada.`);
+      if (!registrarGasto) return;
+
+      const resp = await fetch('/api/premios/registrar-pago', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repartidor_id: Number(btn.dataset.pagarPremio),
+          fecha_desde: desde,
+          fecha_hasta: hasta,
+          lugar: Number(btn.dataset.lugar),
+          monto,
+          pedidos_esa_semana: Number(btn.dataset.pedidos),
+          registrar_gasto: true,
+          sucursal_id: sucursalId,
+        }),
+      });
+      if (!resp.ok) {
+        const err = await resp.json();
+        alert(err.error || 'No se pudo registrar');
+        return;
+      }
+      cargarDesempenoRepartidores();
+    });
+  });
 }
 
 document.getElementById('btn-agregar-repartidor').addEventListener('click', async () => {
