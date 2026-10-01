@@ -1416,19 +1416,76 @@ function unirseASalaSucursal() {
 socketPos.on('connect', unirseASalaSucursal);
 document.getElementById('sucursal-select').addEventListener('change', unirseASalaSucursal);
 
-function sonarAvisoPos() {
+// Los navegadores bloquean el sonido hasta que el usuario toca algo en la página — se
+// desbloquea solo, en la primera interacción, para que la campanita sí suene de verdad
+// cuando llegue un pedido después.
+let audioCtxPos = null;
+function obtenerAudioContextPos() {
+  if (!audioCtxPos) audioCtxPos = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtxPos.state === 'suspended') audioCtxPos.resume();
+  return audioCtxPos;
+}
+document.addEventListener('click', () => obtenerAudioContextPos(), { once: true });
+
+function reproducirCampanitaPos() {
   try {
-    const audio = new AudioContext();
-    const osc = audio.createOscillator();
-    osc.connect(audio.destination);
-    osc.frequency.value = 660;
-    osc.start();
-    setTimeout(() => osc.stop(), 180);
+    const ctx = obtenerAudioContextPos();
+    const ahora = ctx.currentTime;
+    [{ freq: 880, inicio: 0 }, { freq: 660, inicio: 0.16 }].forEach(({ freq, inicio }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, ahora + inicio);
+      gain.gain.exponentialRampToValueAtTime(0.22, ahora + inicio + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ahora + inicio + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ahora + inicio);
+      osc.stop(ahora + inicio + 0.4);
+    });
   } catch (e) {}
 }
 
+// Mientras haya pedidos nuevos sin "Aceptar", la campanita se repite cada pocos segundos
+// (nada agresivo, pero sí constante) hasta que alguien la reconoce.
+let pedidosNuevosSinAceptar = [];
+let intervaloCampanitaPos = null;
+
+function renderBannerNuevoPedido() {
+  const banner = document.getElementById('banner-nuevo-pedido');
+  if (!pedidosNuevosSinAceptar.length) {
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'flex';
+  const n = pedidosNuevosSinAceptar.length;
+  document.getElementById('banner-nuevo-pedido-texto').textContent =
+    n === 1
+      ? `🔔 Nuevo pedido #${pedidosNuevosSinAceptar[0].numero_dia ?? pedidosNuevosSinAceptar[0].id}`
+      : `🔔 ${n} pedidos nuevos`;
+}
+
+function avisarNuevoPedidoPos(pedido) {
+  pedidosNuevosSinAceptar.push(pedido);
+  renderBannerNuevoPedido();
+  reproducirCampanitaPos();
+  if (!intervaloCampanitaPos) {
+    intervaloCampanitaPos = setInterval(reproducirCampanitaPos, 4000);
+  }
+}
+
+document.getElementById('btn-aceptar-nuevo-pedido').addEventListener('click', () => {
+  pedidosNuevosSinAceptar = [];
+  renderBannerNuevoPedido();
+  if (intervaloCampanitaPos) {
+    clearInterval(intervaloCampanitaPos);
+    intervaloCampanitaPos = null;
+  }
+});
+
 socketPos.on('nuevo_pedido', (pedido) => {
-  sonarAvisoPos();
+  avisarNuevoPedidoPos(pedido);
   cargarPedidosYContar();
   if (document.getElementById('overlay-historial').classList.contains('abierto')) cargarHistorial();
 });
