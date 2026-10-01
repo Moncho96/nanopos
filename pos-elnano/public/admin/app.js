@@ -161,7 +161,111 @@ document.getElementById('btn-abrir-repartidores').addEventListener('click', () =
 
 document.getElementById('btn-cerrar-repartidores').addEventListener('click', () => document.getElementById('overlay-repartidores').classList.remove('abierto'));
 
+document.querySelectorAll('[data-submenu-rep]').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('[data-submenu-rep]').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    const esDesempeno = btn.dataset.submenuRep === 'desempeno';
+    document.getElementById('vista-repartidores-catalogo').style.display = esDesempeno ? 'none' : 'block';
+    document.getElementById('vista-repartidores-desempeno').style.display = esDesempeno ? 'block' : 'none';
+    if (esDesempeno && !document.getElementById('rep-desempeno-desde').value) aplicarPresetFechaRep('semana');
+  });
+});
 
+document.querySelectorAll('.chip-fecha-rep').forEach((btn) => {
+  btn.addEventListener('click', () => aplicarPresetFechaRep(btn.dataset.presetRep));
+});
+document.getElementById('btn-consultar-desempeno-rep').addEventListener('click', cargarDesempenoRepartidores);
+
+function aplicarPresetFechaRep(preset) {
+  document.querySelectorAll('.chip-fecha-rep').forEach((b) => b.classList.toggle('activo', b.dataset.presetRep === preset));
+  const hoy = new Date();
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  let desde = new Date(hoy);
+  const hasta = fmt(hoy);
+  if (preset === 'semana') desde.setDate(hoy.getDate() - hoy.getDay());
+  else if (preset === 'mes') desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  document.getElementById('rep-desempeno-desde').value = fmt(desde);
+  document.getElementById('rep-desempeno-hasta').value = hasta;
+  cargarDesempenoRepartidores();
+}
+
+async function cargarDesempenoRepartidores() {
+  const desde = document.getElementById('rep-desempeno-desde').value;
+  const hasta = document.getElementById('rep-desempeno-hasta').value;
+  const sucursalId = document.getElementById('sucursal-select').value;
+  const cont = document.getElementById('rep-desempeno-contenido');
+  if (!desde || !hasta) return;
+
+  cont.innerHTML = '<p style="color:#999;text-align:center;padding:20px">Cargando...</p>';
+  const resp = await fetch(`/api/repartidores/desempeno?sucursal_id=${sucursalId}&fecha_desde=${desde}&fecha_hasta=${hasta}`);
+  if (!resp.ok) {
+    const err = await resp.json();
+    cont.innerHTML = `<p style="color:#b8232f;text-align:center;padding:20px">${err.error || 'No se pudo cargar'}</p>`;
+    return;
+  }
+  const { ranking, porDia } = await resp.json();
+
+  // Arma la lista de días en el rango, para la tabla de desglose
+  const dias = [];
+  const cursor = new Date(desde + 'T00:00:00');
+  const fin = new Date(hasta + 'T00:00:00');
+  while (cursor <= fin) {
+    dias.push(cursor.toISOString().slice(0, 10));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const MESES_CORTOS_REP = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const formatearDiaCorto = (f) => {
+    const [y, m, d] = f.split('-');
+    return `${d} ${MESES_CORTOS_REP[Number(m) - 1]}`;
+  };
+
+  const cantidadPorRepYDia = {};
+  porDia.forEach((r) => {
+    cantidadPorRepYDia[`${r.repartidorId}_${r.dia.slice(0, 10)}`] = r.cantidad;
+  });
+
+  const medallas = ['🥇', '🥈', '🥉'];
+
+  cont.innerHTML = `
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
+      ${ranking
+        .map(
+          (r, i) => `
+        <div class="kpi-card">
+          <div class="valor" style="font-size:17px">${medallas[i] || ''} ${escapeHtml(r.nombre)}</div>
+          <div style="font-size:24px;font-weight:bold;color:#b8232f;margin-top:4px">${r.totalPedidos}</div>
+          <div class="etiqueta">pedidos · $${r.totalVendido.toFixed(0)}</div>
+        </div>`
+        )
+        .join('') || '<p style="color:#999">Sin repartidores activos</p>'}
+    </div>
+
+    <div class="informes-seccion" style="overflow-x:auto">
+      <h3>📅 Pedidos por día</h3>
+      <table class="tabla-simple" style="min-width:${100 + dias.length * 60}px">
+        <thead>
+          <tr>
+            <th>Repartidor</th>
+            ${dias.map((d) => `<th class="num">${formatearDiaCorto(d)}</th>`).join('')}
+            <th class="num">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${ranking
+            .map(
+              (r) => `
+            <tr>
+              <td>${escapeHtml(r.nombre)}</td>
+              ${dias.map((d) => `<td class="num">${cantidadPorRepYDia[`${r.id}_${d}`] || ''}</td>`).join('')}
+              <td class="num"><strong>${r.totalPedidos}</strong></td>
+            </tr>`
+            )
+            .join('')}
+        </tbody>
+      </table>
+    </div>`;
+}
 
 document.getElementById('btn-agregar-repartidor').addEventListener('click', async () => {
   const nombre = document.getElementById('nuevo-repartidor-nombre').value.trim();
