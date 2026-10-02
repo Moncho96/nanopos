@@ -1205,6 +1205,7 @@ async function cargarCorte() {
   const fecha = document.getElementById('corte-fecha').value;
   if (!fecha) return;
 
+  editandoCorteExistente = false;
   corteActual = await fetch(`/api/corte?sucursal_id=${sucursalId}&fecha=${fecha}`).then((r) => r.json());
   corteCerradoActual = await fetch(`/api/corte/cerrado?sucursal_id=${sucursalId}&fecha=${fecha}`).then((r) => r.json());
 
@@ -1288,10 +1289,12 @@ async function agregarGasto() {
   cargarCorte();
 }
 
+let editandoCorteExistente = false;
+
 function renderCuadreCaja() {
   const cont = document.getElementById('cuadre-caja');
 
-  if (corteCerradoActual) {
+  if (corteCerradoActual && !editandoCorteExistente) {
     const filas = corteCerradoActual.resumen
       .map(
         (r) => `
@@ -1308,11 +1311,29 @@ function renderCuadreCaja() {
         <thead><tr><th>Método</th><th class="num">Debía haber</th><th class="num">Contado</th><th class="num">Diferencia</th></tr></thead>
         <tbody>${filas}</tbody>
       </table>
-      <div class="resumen-total" style="color:#5a2ca0"><span>🛵 Ventas DiDi (manual)</span><span>$${Number(corteCerradoActual.ventas_didi || 0).toFixed(2)}</span></div>`;
+      <div class="resumen-total" style="color:#5a2ca0"><span>🛵 Ventas DiDi (manual)</span><span>$${Number(corteCerradoActual.ventas_didi || 0).toFixed(2)}</span></div>
+      <button id="btn-editar-corte-cerrado" style="margin:0 12px 16px;width:calc(100% - 24px);padding:12px;border-radius:8px;border:1px solid #0056b3;background:white;color:#0056b3;font-weight:700;cursor:pointer">✏️ Editar este corte (por si se capturó mal)</button>`;
+
+    document.getElementById('btn-editar-corte-cerrado').addEventListener('click', () => {
+      editandoCorteExistente = true;
+      renderCuadreCaja();
+    });
     return;
   }
 
+  // Si se está corrigiendo un corte ya cerrado, los campos se prellenan con lo que ya
+  // se había capturado, en vez de empezar en blanco.
+  const contadoPrevio = {};
+  let ventasDidiPrevio = '';
+  if (corteCerradoActual) {
+    corteCerradoActual.resumen.forEach((r) => {
+      contadoPrevio[r.metodo] = r.contado;
+    });
+    ventasDidiPrevio = corteCerradoActual.ventas_didi || '';
+  }
+
   cont.innerHTML = `
+    ${editandoCorteExistente ? '<div style="margin:0 12px 10px;padding:10px;background:#fff3cd;color:#7a5c00;border-radius:8px;font-size:13px">✏️ Corrigiendo un corte que ya estaba cerrado — al guardar, reemplaza lo que había antes.</div>' : ''}
     <table class="tabla-simple">
       <thead><tr><th>Método</th><th class="num">Debe haber</th><th class="num">Contado</th></tr></thead>
       <tbody>
@@ -1322,7 +1343,7 @@ function renderCuadreCaja() {
           <tr>
             <td>${METODO_LABELS[r.metodo]}</td>
             <td class="num">$${r.neto.toFixed(2)}</td>
-            <td class="num"><input type="text" inputmode="decimal" class="input-contado" data-metodo="${r.metodo}" placeholder="0.00" style="width:90px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
+            <td class="num"><input type="text" inputmode="decimal" class="input-contado" data-metodo="${r.metodo}" placeholder="0.00" value="${contadoPrevio[r.metodo] ?? ''}" style="width:90px;padding:6px;border-radius:6px;border:1px solid #ddd;text-align:right" /></td>
           </tr>`
           )
           .join('')}
@@ -1330,9 +1351,10 @@ function renderCuadreCaja() {
     </table>
     <div style="display:flex;align-items:center;gap:8px;margin:0 12px 16px;padding:12px;background:#f3ecfa;border-radius:10px">
       <span style="font-size:13px;color:#5a2ca0;font-weight:600;flex:1">🛵 Ventas DiDi de hoy (captúralo tú, no está integrado todavía)</span>
-      <input type="text" inputmode="decimal" id="input-ventas-didi" placeholder="0.00" style="width:100px;padding:8px;border-radius:6px;border:1px solid #ddd;text-align:right" />
+      <input type="text" inputmode="decimal" id="input-ventas-didi" placeholder="0.00" value="${ventasDidiPrevio}" style="width:100px;padding:8px;border-radius:6px;border:1px solid #ddd;text-align:right" />
     </div>
-    <button id="btn-cerrar-corte-accion" class="btn-nuevo-pedido" style="margin:0 12px 16px;width:calc(100% - 24px);background:#1a7d3a">Cerrar corte</button>`;
+    <button id="btn-cerrar-corte-accion" class="btn-nuevo-pedido" style="margin:0 12px 16px;width:calc(100% - 24px);background:#1a7d3a">${editandoCorteExistente ? 'Guardar corrección' : 'Cerrar corte'}</button>
+    ${editandoCorteExistente ? '<button id="btn-cancelar-edicion-corte" style="margin:0 12px 16px;width:calc(100% - 24px);padding:10px;border-radius:8px;border:1px solid #999;background:white;color:#555;cursor:pointer">Cancelar</button>' : ''}`;
 
   document.getElementById('input-ventas-didi').addEventListener('input', (e) => {
     e.target.value = e.target.value.replace(/[^0-9.]/g, '');
@@ -1343,6 +1365,12 @@ function renderCuadreCaja() {
     });
   });
   document.getElementById('btn-cerrar-corte-accion').addEventListener('click', cerrarCorte);
+  if (editandoCorteExistente) {
+    document.getElementById('btn-cancelar-edicion-corte').addEventListener('click', () => {
+      editandoCorteExistente = false;
+      renderCuadreCaja();
+    });
+  }
 }
 
 async function cerrarCorte() {
@@ -1354,11 +1382,14 @@ async function cerrarCorte() {
   });
   const ventas_didi = Number(document.getElementById('input-ventas-didi').value) || 0;
 
-  if (!confirm('¿Cerrar el corte del día? Ya no vas a poder registrar más gastos para esta fecha.')) return;
+  const mensajeConfirmacion = editandoCorteExistente
+    ? '¿Guardar la corrección de este corte? Reemplaza los montos contados que había antes.'
+    : '¿Cerrar el corte del día? Ya no vas a poder registrar más gastos para esta fecha.';
+  if (!confirm(mensajeConfirmacion)) return;
 
   const btn = document.getElementById('btn-cerrar-corte-accion');
   btn.disabled = true;
-  btn.textContent = 'Cerrando...';
+  btn.textContent = editandoCorteExistente ? 'Guardando...' : 'Cerrando...';
 
   await fetch('/api/corte/cerrar', {
     method: 'POST',
@@ -1366,6 +1397,7 @@ async function cerrarCorte() {
     body: JSON.stringify({ sucursal_id, fecha, contado, ventas_didi }),
   });
 
+  editandoCorteExistente = false;
   cargarCorte();
 }
 
