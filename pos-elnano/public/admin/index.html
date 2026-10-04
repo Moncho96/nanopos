@@ -205,6 +205,8 @@
   .chip-fecha { padding: 8px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; font-size: 13px; cursor: pointer; }
   .chip-fecha-rep { padding: 8px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; font-size: 13px; cursor: pointer; }
   .chip-fecha-rep.activo { background: #b8232f; color: white; border-color: #b8232f; }
+  .chip-fecha-gpf { padding: 8px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; font-size: 13px; cursor: pointer; }
+  .chip-fecha-gpf.activo { background: #b8232f; color: white; border-color: #b8232f; }
   .chip-fecha.activo { background: #b8232f; color: white; border-color: #b8232f; }
   .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 14px 0; }
   .kpi-card { background: white; border-radius: 12px; padding: 14px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
@@ -360,6 +362,7 @@
   <button class="admin-tile" id="btn-abrir-compras"><span class="emoji">🛒</span><span class="nombre">Planeación de compras</span></button>
   <button class="admin-tile" id="btn-abrir-informes"><span class="emoji">📈</span><span class="nombre">Informes</span></button>
   <button class="admin-tile" id="btn-abrir-profit-first"><span class="emoji">💰</span><span class="nombre">Profit First</span></button>
+  <button class="admin-tile" id="btn-abrir-gastos-pf"><span class="emoji">💸</span><span class="nombre">Gastos por caja</span></button>
   <button class="admin-tile" id="btn-abrir-reparto"><span class="emoji">🤝</span><span class="nombre">Reparto de utilidades</span></button>
   <button class="admin-tile" id="btn-abrir-lealtad"><span class="emoji">🎁</span><span class="nombre">Lealtad</span></button>
   <button class="admin-tile" id="btn-abrir-resenas"><span class="emoji">⭐</span><span class="nombre">Reseñas</span></button>
@@ -588,6 +591,58 @@
     <div id="pf-import-status" style="font-size:12px;margin-top:6px"></div>
   </div>
   <div id="pf-categorias" style="padding:0 0 24px"></div>
+</div>
+
+<!-- Gastos por caja de Profit First -->
+<div class="full-overlay" id="overlay-gastos-pf">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-gastos-pf">✕</button>
+    <span class="titulo">Gastos por caja</span>
+  </div>
+
+  <div class="informes-seccion" style="margin:12px">
+    <h3>Registrar gasto <span id="gpf-sucursal-label" style="font-size:12px;font-weight:600;color:#888"></span></h3>
+    <div style="font-size:12px;color:#888;margin-bottom:10px">No afecta el corte de caja: se descuenta de la caja de Profit First que elijas y queda registrado en esta sucursal.</div>
+
+    <label style="font-size:12px;color:#888">Caja</label>
+    <select id="gpf-categoria" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;margin-bottom:8px"></select>
+
+    <div style="display:flex;gap:8px">
+      <div style="flex:1">
+        <label style="font-size:12px;color:#888">Monto</label>
+        <input type="text" inputmode="decimal" id="gpf-monto" placeholder="0.00" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;margin-bottom:8px" />
+      </div>
+      <div style="flex:1">
+        <label style="font-size:12px;color:#888">Fecha</label>
+        <input type="date" id="gpf-fecha" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;margin-bottom:8px" />
+      </div>
+    </div>
+
+    <label style="font-size:12px;color:#888">Descripción</label>
+    <input type="text" id="gpf-descripcion" placeholder="Ej. Renta de octubre, pago de luz..." style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;margin-bottom:8px" />
+
+    <label style="font-size:12px;color:#888">Se pagó con</label>
+    <select id="gpf-metodo" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd;margin-bottom:12px">
+      <option value="efectivo">Efectivo</option>
+      <option value="transferencia">Transferencia</option>
+      <option value="tarjeta">Tarjeta</option>
+    </select>
+
+    <button id="btn-registrar-gasto-pf" style="width:100%;padding:12px;border-radius:8px;border:none;background:#b8232f;color:white;font-weight:700;font-size:14px;cursor:pointer">Registrar gasto</button>
+    <div id="gpf-status" style="font-size:13px;margin-top:8px"></div>
+  </div>
+
+  <div class="form-inline" style="flex-wrap:wrap">
+    <button class="chip-fecha-gpf" data-preset-gpf="hoy">Hoy</button>
+    <button class="chip-fecha-gpf" data-preset-gpf="semana">Esta semana</button>
+    <button class="chip-fecha-gpf" data-preset-gpf="mes">Este mes</button>
+    <input type="date" id="gpf-desde" />
+    <input type="date" id="gpf-hasta" />
+    <button id="btn-consultar-gastos-pf">Consultar</button>
+  </div>
+
+  <div id="gpf-resumen" style="padding:0 12px"></div>
+  <div id="gpf-lista" style="padding:0 12px 32px"></div>
 </div>
 
 <!-- Reparto de utilidades -->

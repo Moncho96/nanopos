@@ -933,8 +933,9 @@ async function cargarInformes() {
       <div style="font-size:14px;line-height:2">
         <div style="display:flex;justify-content:space-between"><span>Ventas</span><strong>$${d.ventas.toFixed(2)}</strong></div>
         <div style="display:flex;justify-content:space-between;color:#666"><span>− Gastos registrados</span><span>$${d.gastos.toFixed(2)}</span></div>
+        <div style="display:flex;justify-content:space-between;color:#666"><span>− Gastos por caja (Profit First)</span><span>$${d.gastosPorCaja.toFixed(2)}</span></div>
         <div style="display:flex;justify-content:space-between;color:#666"><span>− Descuentos por lealtad</span><span>$${d.descuentosLealtad.toFixed(2)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding-top:8px;margin-top:4px;border-top:1px solid #eee;font-weight:bold"><span>≈ Resultado del periodo</span><span>$${(d.ventas - d.gastos - d.descuentosLealtad).toFixed(2)}</span></div>
+        <div style="display:flex;justify-content:space-between;padding-top:8px;margin-top:4px;border-top:1px solid #eee;font-weight:bold"><span>≈ Resultado del periodo</span><span>$${(d.ventas - d.gastos - d.gastosPorCaja - d.descuentosLealtad).toFixed(2)}</span></div>
       </div>
       <div style="font-size:11px;color:#aaa;margin-top:8px">No incluye el costo de los insumos consumidos, solo ventas menos gastos registrados y descuentos.</div>
     </div>
@@ -1018,7 +1019,7 @@ async function cargarInformes() {
 const DRAWER_SOLO_ENCARGADO = [
   'btn-abrir-compra-registro', 'btn-abrir-importar', 'btn-abrir-conteo', 'btn-abrir-compras',
   'btn-abrir-lealtad', 'btn-abrir-resenas', 'btn-abrir-reparto', 'btn-abrir-importar-recetas',
-  'btn-abrir-menu-admin', 'btn-abrir-envios', 'btn-abrir-empleados', 'btn-abrir-profit-first',
+  'btn-abrir-menu-admin', 'btn-abrir-envios', 'btn-abrir-empleados', 'btn-abrir-profit-first', 'btn-abrir-gastos-pf',
 ];
 const DRAWER_CAJERO_O_ENCARGADO = []; // Informes, Clientes y Repartidores quedan visibles a cajero también
 
@@ -2831,6 +2832,165 @@ async function borrarInsumoAdmin(insumoId) {
   cargarInsumosAdmin();
 }
 
+
+// ==================== GASTOS POR CAJA (PROFIT FIRST) ====================
+
+const PF_COLOR = {
+  opex: '#3c5a6b', nomina: '#c98a2c', impuestos: '#a63d2f', utilidad: '#4f7942',
+  'sueldo-dueno': '#2c4350', renta: '#8a6d3b', aguinaldo: '#6b3550',
+};
+
+function fechaLocalISO(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function etiquetaSucursalGastoPF() {
+  const sucursal = state.sucursales.find((s) => String(s.id) === document.getElementById('sucursal-select').value);
+  document.getElementById('gpf-sucursal-label').textContent = sucursal ? `· ${sucursal.nombre}` : '';
+}
+
+async function cargarCategoriasGastoPF() {
+  const categorias = await fetch('/api/profit-first/categorias').then((r) => r.json());
+  document.getElementById('gpf-categoria').innerHTML = categorias
+    .map((c) => `<option value="${c.id}">${escapeHtml(c.nombre)} — saldo $${Number(c.saldo).toFixed(2)}</option>`)
+    .join('');
+}
+
+document.getElementById('btn-abrir-gastos-pf').addEventListener('click', async () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-gastos-pf').classList.add('abierto');
+  document.getElementById('gpf-fecha').value = fechaNegocioActual();
+  document.getElementById('gpf-status').textContent = '';
+  etiquetaSucursalGastoPF();
+  await cargarCategoriasGastoPF();
+  if (!document.getElementById('gpf-desde').value) aplicarPresetFechaGastoPF('semana');
+  else cargarGastosPF();
+});
+document.getElementById('btn-cerrar-gastos-pf').addEventListener('click', () => {
+  document.getElementById('overlay-gastos-pf').classList.remove('abierto');
+});
+
+// Si cambian de sucursal con la ventana abierta, se refresca todo para esa sucursal
+document.getElementById('sucursal-select').addEventListener('change', () => {
+  if (document.getElementById('overlay-gastos-pf').classList.contains('abierto')) {
+    etiquetaSucursalGastoPF();
+    cargarGastosPF();
+  }
+});
+
+document.getElementById('gpf-monto').addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/[^0-9.]/g, '');
+});
+
+document.getElementById('btn-registrar-gasto-pf').addEventListener('click', async () => {
+  const statusEl = document.getElementById('gpf-status');
+  const categoria_id = document.getElementById('gpf-categoria').value;
+  const monto = document.getElementById('gpf-monto').value;
+  const descripcion = document.getElementById('gpf-descripcion').value.trim();
+  const metodo_pago = document.getElementById('gpf-metodo').value;
+  const fecha = document.getElementById('gpf-fecha').value;
+  const sucursal_id = document.getElementById('sucursal-select').value;
+
+  statusEl.style.color = '#b8232f';
+  if (!categoria_id) return (statusEl.textContent = 'Elige la caja.');
+  if (!monto || Number(monto) <= 0) return (statusEl.textContent = 'Falta el monto.');
+  if (!descripcion) return (statusEl.textContent = 'Falta la descripción.');
+
+  const btn = document.getElementById('btn-registrar-gasto-pf');
+  btn.disabled = true;
+  const resp = await fetch('/api/gastos-pf', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursal_id, categoria_id, monto, descripcion, metodo_pago, fecha }),
+  });
+  btn.disabled = false;
+
+  if (!resp.ok) {
+    const err = await resp.json();
+    statusEl.textContent = err.error || 'No se pudo registrar.';
+    return;
+  }
+  document.getElementById('gpf-monto').value = '';
+  document.getElementById('gpf-descripcion').value = '';
+  statusEl.style.color = '#1a7d3a';
+  statusEl.textContent = '✅ Gasto registrado.';
+  await cargarCategoriasGastoPF(); // refresca el saldo que se ve en cada caja
+  cargarGastosPF();
+});
+
+document.querySelectorAll('.chip-fecha-gpf').forEach((btn) => {
+  btn.addEventListener('click', () => aplicarPresetFechaGastoPF(btn.dataset.presetGpf));
+});
+document.getElementById('btn-consultar-gastos-pf').addEventListener('click', cargarGastosPF);
+
+function aplicarPresetFechaGastoPF(preset) {
+  document.querySelectorAll('.chip-fecha-gpf').forEach((b) => b.classList.toggle('activo', b.dataset.presetGpf === preset));
+  const hoy = new Date(fechaNegocioActual() + 'T12:00:00'); // día de negocio, no calendario
+  let desde = new Date(hoy);
+  if (preset === 'semana') desde.setDate(hoy.getDate() - hoy.getDay());
+  else if (preset === 'mes') desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  document.getElementById('gpf-desde').value = fechaLocalISO(desde);
+  document.getElementById('gpf-hasta').value = fechaLocalISO(hoy);
+  cargarGastosPF();
+}
+
+async function cargarGastosPF() {
+  const desde = document.getElementById('gpf-desde').value;
+  const hasta = document.getElementById('gpf-hasta').value;
+  const sucursalId = document.getElementById('sucursal-select').value;
+  if (!desde || !hasta) return;
+
+  const gastos = await fetch(`/api/gastos-pf?sucursal_id=${sucursalId}&fecha_desde=${desde}&fecha_hasta=${hasta}`).then((r) => r.json());
+
+  const total = gastos.reduce((s, g) => s + Number(g.monto), 0);
+  const porCategoria = {};
+  gastos.forEach((g) => {
+    porCategoria[g.categoria_nombre] = (porCategoria[g.categoria_nombre] || 0) + Number(g.monto);
+  });
+
+  document.getElementById('gpf-resumen').innerHTML = gastos.length
+    ? `<div class="kpi-card" style="margin-bottom:10px;text-align:left;display:flex;justify-content:space-between;align-items:center">
+         <span class="etiqueta" style="margin:0">Total del periodo</span>
+         <span class="valor">$${total.toFixed(2)}</span>
+       </div>
+       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">
+         ${Object.entries(porCategoria)
+           .sort((a, b) => b[1] - a[1])
+           .map(([nombre, monto]) => {
+             const color = PF_COLOR[PF_SLUG[nombre]] || '#555';
+             return `<span style="background:${color};color:white;font-size:11px;font-weight:700;padding:4px 9px;border-radius:12px">${escapeHtml(nombre)} · $${monto.toFixed(0)}</span>`;
+           })
+           .join('')}
+       </div>`
+    : '';
+
+  document.getElementById('gpf-lista').innerHTML =
+    gastos
+      .map((g) => {
+        const color = PF_COLOR[PF_SLUG[g.categoria_nombre]] || '#555';
+        return `
+      <div style="background:white;border-radius:10px;padding:10px 12px;margin-bottom:8px;border-left:5px solid ${color};display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div style="min-width:0">
+          <div style="font-size:13.5px;font-weight:600">${escapeHtml(g.descripcion)}</div>
+          <div style="font-size:11.5px;color:#888;margin-top:2px">${formatearFechaCorta(g.fecha)} · ${escapeHtml(g.categoria_nombre)} · ${METODO_LABELS[g.metodo_pago] || g.metodo_pago}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <strong style="color:#b8232f">$${Number(g.monto).toFixed(2)}</strong>
+          <button class="btn-eliminar-fila" data-borrar-gasto-pf="${g.id}" title="Borrar">🗑️</button>
+        </div>
+      </div>`;
+      })
+      .join('') || '<p style="color:#999;font-size:13px;text-align:center;padding:20px">Sin gastos registrados en este periodo</p>';
+
+  document.querySelectorAll('[data-borrar-gasto-pf]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('¿Borrar este gasto? También se le regresa el dinero a su caja.')) return;
+      await fetch(`/api/gastos-pf/${btn.dataset.borrarGastoPf}`, { method: 'DELETE' });
+      await cargarCategoriasGastoPF();
+      cargarGastosPF();
+    });
+  });
+}
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
