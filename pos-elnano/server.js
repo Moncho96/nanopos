@@ -1459,6 +1459,98 @@ app.delete('/api/profit-first/movimientos/:id', requierePuesto(), async (req, re
   res.json({ ok: true });
 });
 
+// ---------- Gastos por caja de Profit First (fuera del corte) ----------
+app.get('/api/gastos-pf', requierePuesto(), async (req, res) => {
+  const { sucursal_id, fecha_desde, fecha_hasta } = req.query;
+  const condiciones = [];
+  const params = [];
+  if (sucursal_id) {
+    params.push(sucursal_id);
+    condiciones.push(`g.sucursal_id = $${params.length}`);
+  }
+  if (fecha_desde) {
+    params.push(fecha_desde);
+    condiciones.push(`g.fecha >= $${params.length}`);
+  }
+  if (fecha_hasta) {
+    params.push(fecha_hasta);
+    condiciones.push(`g.fecha <= $${params.length}`);
+  }
+  const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
+  const { rows } = await pool.query(
+    `SELECT g.id, g.sucursal_id, g.categoria_id, g.descripcion, g.monto, g.metodo_pago,
+            to_char(g.fecha, 'YYYY-MM-DD') AS fecha, c.nombre AS categoria_nombre, s.nombre AS sucursal_nombre
+     FROM gastos_profit_first g
+     JOIN profit_first_categorias c ON c.id = g.categoria_id
+     JOIN sucursales s ON s.id = g.sucursal_id
+     ${where}
+     ORDER BY g.fecha DESC, g.id DESC LIMIT 500`,
+    params
+  );
+  res.json(rows);
+});
+
+app.post('/api/gastos-pf', requierePuesto(), async (req, res) => {
+  const { sucursal_id, categoria_id, descripcion, monto, metodo_pago, fecha } = req.body;
+  if (!sucursal_id || !categoria_id) return res.status(400).json({ error: 'Falta la sucursal o la categoría' });
+  if (!monto || Number(monto) <= 0) return res.status(400).json({ error: 'El monto debe ser mayor a cero' });
+  if (!descripcion || !descripcion.trim()) return res.status(400).json({ error: 'Falta la descripción del gasto' });
+
+  const metodo = ['efectivo', 'tarjeta', 'transferencia'].includes(metodo_pago) ? metodo_pago : 'efectivo';
+  const fechaGasto = fecha || fechaNegocioActualJS();
+
+  const { rows: catRows } = await pool.query('SELECT id FROM profit_first_categorias WHERE id = $1', [categoria_id]);
+  if (!catRows.length) return res.status(404).json({ error: 'Categoría no encontrada' });
+  const { rows: sucRows } = await pool.query('SELECT nombre FROM sucursales WHERE id = $1', [sucursal_id]);
+  if (!sucRows.length) return res.status(404).json({ error: 'Sucursal no encontrada' });
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: movRows } = await client.query(
+      `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, creado_en)
+       VALUES ($1,'gasto',$2,$3,$4) RETURNING id`,
+      [categoria_id, monto, `${descripcion.trim()} (${sucRows[0].nombre})`, `${fechaGasto} 12:00:00`]
+    );
+    const { rows } = await client.query(
+      `INSERT INTO gastos_profit_first (sucursal_id, categoria_id, descripcion, monto, metodo_pago, fecha, movimiento_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+      [sucursal_id, categoria_id, descripcion.trim(), monto, metodo, fechaGasto, movRows[0].id]
+    );
+    await client.query('COMMIT');
+    res.json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error registrando gasto por caja:', err);
+    res.status(500).json({ error: 'No se pudo registrar el gasto' });
+  } finally {
+    client.release();
+  }
+});
+
+app.delete('/api/gastos-pf/:id', requierePuesto(), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query('SELECT movimiento_id FROM gastos_profit_first WHERE id = $1', [req.params.id]);
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Gasto no encontrado' });
+    }
+    await client.query('DELETE FROM gastos_profit_first WHERE id = $1', [req.params.id]);
+    if (rows[0].movimiento_id) {
+      await client.query('DELETE FROM profit_first_movimientos WHERE id = $1', [rows[0].movimiento_id]);
+    }
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: 'No se pudo borrar el gasto' });
+  } finally {
+    client.release();
+  }
+});
+
 // Importa el respaldo del sistema anterior de "caja chica" (metas diarias/semanales/mensuales
 // en vez de porcentajes) y lo traduce a movimientos en las categorías actuales.
 // Mapeo: Nómina→Nómina, Impuestos→Impuestos, Sueldo→Sueldo dueño, Fijos→Renta,
@@ -2493,6 +2585,19 @@ app.get('/api/informes', requierePuesto('cajero'), async (req, res) => {
     p10
   );
 
+  // 11. Gastos registrados por caja de Profit First (fuera del corte)
+  const paramsGpf = [fecha_desde, fecha_hasta];
+  let filtroGpf = '';
+  if (sucursal_id) {
+    paramsGpf.push(sucursal_id);
+    filtroGpf = ' AND g.sucursal_id = $3';
+  }
+  const { rows: gastosPfRows } = await pool.query(
+    `SELECT COALESCE(SUM(g.monto), 0) AS total FROM gastos_profit_first g
+     WHERE g.fecha BETWEEN $1 AND $2${filtroGpf}`,
+    paramsGpf
+  );
+
   res.json({
     pedidos: kpiRows[0].pedidos,
     ventas: Number(kpiRows[0].ventas),
@@ -2511,6 +2616,7 @@ app.get('/api/informes', requierePuesto('cajero'), async (req, res) => {
     resenaCantidad: resenasRows[0].n,
     clientesNuevos: clientesRows[0].n,
     gastos: Number(gastosRows[0].total),
+    gastosPorCaja: Number(gastosPfRows[0].total),
   });
 });
 
