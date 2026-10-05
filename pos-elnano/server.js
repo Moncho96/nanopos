@@ -1403,6 +1403,82 @@ app.patch('/api/pedidos/:id/liquidar-entrega', requierePuesto('cajero'), verific
 });
 
 // ---------- Profit First ----------
+
+// Reparte `base` entre las cajas según su porcentaje, respetando los topes. Lo que sobra de una
+// caja que ya llegó a su tope NO se pierde: se va a su caja destino (por defecto Utilidad). Si el
+// destino también está lleno, sigue a SU destino; si se acaba la cadena, lo absorbe la última caja
+// aunque rebase su tope (preferible a que el dinero desaparezca del registro).
+function repartirCorteProfitFirst(categorias, saldosIniciales, base, fecha, sufijo) {
+  const porId = {};
+  const saldo = {};
+  categorias.forEach((c) => {
+    porId[c.id] = c;
+    saldo[c.id] = Number(saldosIniciales[c.id] || 0);
+  });
+  const redondear = (n) => Number(n.toFixed(2));
+  const espacio = (c) => (c.limite ? Math.max(0, Number(c.limite) - saldo[c.id]) : Infinity);
+
+  const entradas = [];
+  const excedentes = [];
+
+  // 1) Cada caja recibe lo suyo hasta donde le quepa
+  for (const cat of categorias) {
+    const monto = redondear(base * (Number(cat.porcentaje) / 100));
+    if (monto <= 0) continue;
+    const aplicado = Math.min(monto, espacio(cat));
+    if (aplicado > 0) {
+      entradas.push({ categoria_id: cat.id, monto: redondear(aplicado), descripcion: `Corte del ${fecha}${sufijo}` });
+      saldo[cat.id] += aplicado;
+    }
+    const sobra = redondear(monto - aplicado);
+    if (sobra > 0) excedentes.push({ origen: cat, monto: sobra });
+  }
+
+  // 2) El excedente de cada caja llena sigue su cadena de destinos
+  const utilidad = categorias.find((c) => c.nombre === 'Utilidad');
+  let sinAsignar = 0;
+  for (const ex of excedentes) {
+    let restante = ex.monto;
+    let actual = ex.origen;
+    let ultimo = null;
+    const visitados = new Set([actual.id]);
+
+    while (restante > 0.004) {
+      let destino = actual.destino_excedente_id ? porId[actual.destino_excedente_id] : null;
+      if (!destino && actual.id === ex.origen.id && utilidad && utilidad.id !== actual.id) destino = utilidad;
+      if (!destino || visitados.has(destino.id)) break;
+      visitados.add(destino.id);
+      ultimo = destino;
+
+      const cabe = Math.min(restante, espacio(destino));
+      if (cabe > 0.004) {
+        entradas.push({
+          categoria_id: destino.id,
+          monto: redondear(cabe),
+          descripcion: `Excedente de ${ex.origen.nombre} (tope alcanzado) — corte del ${fecha}`,
+        });
+        saldo[destino.id] += cabe;
+        restante = redondear(restante - cabe);
+      }
+      actual = destino;
+    }
+
+    if (restante > 0.004) {
+      if (ultimo) {
+        entradas.push({
+          categoria_id: ultimo.id,
+          monto: redondear(restante),
+          descripcion: `Excedente de ${ex.origen.nombre} (tope alcanzado y destino lleno; rebasa el tope) — corte del ${fecha}`,
+        });
+        saldo[ultimo.id] += restante;
+      } else {
+        sinAsignar = redondear(sinAsignar + restante);
+      }
+    }
+  }
+  return { entradas, sinAsignar };
+}
+
 app.get('/api/profit-first/categorias', requierePuesto(), async (req, res) => {
   const { rows: categorias } = await pool.query('SELECT * FROM profit_first_categorias ORDER BY orden');
   const { rows: saldos } = await pool.query(
@@ -1420,13 +1496,19 @@ app.patch('/api/profit-first/categorias/:id', requierePuesto(), async (req, res)
   const { porcentaje, nombre } = req.body;
   const limiteProvisto = Object.prototype.hasOwnProperty.call(req.body, 'limite');
   const limite = limiteProvisto ? req.body.limite || null : undefined;
+  const destinoProvisto = Object.prototype.hasOwnProperty.call(req.body, 'destino_excedente_id');
+  const destino = destinoProvisto ? req.body.destino_excedente_id || null : undefined;
+  if (destinoProvisto && destino && String(destino) === String(req.params.id)) {
+    return res.status(400).json({ error: 'El excedente no puede mandarse a la misma caja' });
+  }
   const { rows } = await pool.query(
     `UPDATE profit_first_categorias SET
        porcentaje = COALESCE($1, porcentaje),
        nombre = COALESCE($2, nombre),
-       limite = CASE WHEN $4 THEN $3 ELSE limite END
+       limite = CASE WHEN $4 THEN $3 ELSE limite END,
+       destino_excedente_id = CASE WHEN $6 THEN $7::int ELSE destino_excedente_id END
      WHERE id = $5 RETURNING *`,
-    [porcentaje, nombre, limite, limiteProvisto, req.params.id]
+    [porcentaje, nombre, limite, limiteProvisto, req.params.id, destinoProvisto, destino]
   );
   if (!rows.length) return res.status(404).json({ error: 'Categoría no encontrada' });
   res.json(rows[0]);
@@ -2767,29 +2849,28 @@ app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
   // para no duplicarlo.
   await pool.query(`DELETE FROM profit_first_movimientos WHERE corte_id = $1 AND tipo = 'ingreso'`, [corteGuardado.id]);
   const { rows: categoriasPF } = await pool.query('SELECT * FROM profit_first_categorias ORDER BY orden');
+  const { rows: saldosRows } = await pool.query(
+    `SELECT categoria_id, COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE -monto END), 0) AS saldo
+     FROM profit_first_movimientos GROUP BY categoria_id`
+  );
+  const saldosIniciales = {};
+  saldosRows.forEach((r) => (saldosIniciales[r.categoria_id] = Number(r.saldo)));
+
   const baseParaProfitFirst = totalContado + ventasDidi;
-  for (const cat of categoriasPF) {
-    let monto = Number((baseParaProfitFirst * (Number(cat.porcentaje) / 100)).toFixed(2));
-
-    // Si la categoría tiene límite (no es "libre"), no dejar que el saldo lo rebase
-    if (monto > 0 && cat.limite) {
-      const { rows: saldoRows } = await pool.query(
-        `SELECT COALESCE(SUM(CASE WHEN tipo = 'ingreso' THEN monto ELSE -monto END), 0) AS saldo
-         FROM profit_first_movimientos WHERE categoria_id = $1`,
-        [cat.id]
-      );
-      const saldoActual = Number(saldoRows[0].saldo);
-      const espacioDisponible = Math.max(0, Number(cat.limite) - saldoActual);
-      monto = Math.min(monto, espacioDisponible);
-    }
-
-    if (monto > 0) {
-      await pool.query(
-        `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, corte_id) VALUES ($1,'ingreso',$2,$3,$4)`,
-        [cat.id, monto, `Corte del ${fecha}${ventasDidi > 0 ? ' (incluye DiDi)' : ''}`, corteGuardado.id]
-      );
-    }
+  const { entradas, sinAsignar } = repartirCorteProfitFirst(
+    categoriasPF,
+    saldosIniciales,
+    baseParaProfitFirst,
+    fecha,
+    ventasDidi > 0 ? ' (incluye DiDi)' : ''
+  );
+  for (const e of entradas) {
+    await pool.query(
+      `INSERT INTO profit_first_movimientos (categoria_id, tipo, monto, descripcion, corte_id) VALUES ($1,'ingreso',$2,$3,$4)`,
+      [e.categoria_id, e.monto, e.descripcion, corteGuardado.id]
+    );
   }
+  if (sinAsignar > 0) console.warn(`[Profit First] Corte ${fecha}: $${sinAsignar} de excedente no se pudo asignar a ninguna caja`);
 
   res.json(corteGuardado);
 });
