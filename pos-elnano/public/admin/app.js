@@ -703,6 +703,12 @@ const PF_SLUG = {
 };
 let profitFirstCache = [];
 
+function nombreDestinoPF(cat) {
+  const destino = profitFirstCache.find((c) => c.id === cat.destino_excedente_id)
+    || (cat.nombre !== 'Utilidad' ? profitFirstCache.find((c) => c.nombre === 'Utilidad') : null);
+  return destino ? destino.nombre : '';
+}
+
 function abrirModalConfigPF(categoriaId) {
   const cat = profitFirstCache.find((c) => c.id === categoriaId);
   if (!cat) return;
@@ -716,6 +722,15 @@ function abrirModalConfigPF(categoriaId) {
         <label style="margin-top:14px">Tope (opcional)</label>
         <input type="text" inputmode="decimal" id="config-pf-limite" placeholder="Déjalo vacío para que sea libre" value="${cat.limite ?? ''}" />
         <div class="helptext">Si le pones un tope, el reparto automático deja de meterle dinero a esta categoría en cuanto llegue a ese monto. Vacío = sigue sumando sin límite.</div>
+        <label style="margin-top:14px">Cuando llegue al tope, el excedente se va a</label>
+        <select id="config-pf-destino" style="width:100%;padding:10px;border-radius:8px;border:1px solid #ddd">
+          ${cat.nombre === 'Utilidad' ? `<option value="">Ninguna (queda sin asignar)</option>` : ''}
+          ${profitFirstCache
+            .filter((c) => c.id !== cat.id)
+            .map((c) => `<option value="${c.id}" ${String(cat.destino_excedente_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.nombre)}</option>`)
+            .join('')}
+        </select>
+        <div class="helptext">Así el dinero que ya no le cabe a esta caja no se pierde del registro.</div>
         <div class="modal-botones" style="margin-top:16px">
           <button class="btn-cancelar" id="btn-cerrar-config-pf">Cancelar</button>
           <button class="btn-agregar" id="btn-guardar-config-pf">Guardar</button>
@@ -742,7 +757,7 @@ function abrirModalConfigPF(categoriaId) {
     await fetch(`/api/profit-first/categorias/${categoriaId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ porcentaje, limite: limiteTexto || null }),
+      body: JSON.stringify({ porcentaje, limite: limiteTexto || null, destino_excedente_id: document.getElementById('config-pf-destino').value || null }),
     });
     document.getElementById('modal-container').innerHTML = '';
     cargarProfitFirst();
@@ -776,7 +791,7 @@ async function cargarProfitFirst() {
           ? `<div style="background:var(--line);height:6px;border-radius:3px;margin-top:6px;overflow:hidden">
                <div class="pf-chip ${slug}" style="display:block;padding:0;border-radius:0;height:100%;width:${porcentajeLleno}%"></div>
              </div>
-             <div style="font-size:11px;color:var(--ink-soft);margin-top:3px">Tope: $${Number(c.limite).toFixed(2)} (${porcentajeLleno.toFixed(0)}%)</div>`
+             <div style="font-size:11px;color:var(--ink-soft);margin-top:3px">Tope: $${Number(c.limite).toFixed(2)} (${porcentajeLleno.toFixed(0)}%)${nombreDestinoPF(c) ? ` · excedente → ${escapeHtml(nombreDestinoPF(c))}` : ''}</div>`
           : `<div style="font-size:11px;color:var(--ink-soft);margin-top:4px">Libre, sin tope</div>`
       }
       <div style="display:flex;gap:6px;margin-top:12px">
