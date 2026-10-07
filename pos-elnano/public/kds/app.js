@@ -22,12 +22,19 @@ async function cargarSucursales() {
 
   const params = new URLSearchParams(window.location.search);
   const sucursalParam = params.get('sucursal');
+  let sucursalElegida = null;
   if (sucursalParam) {
-    const encontrada = sucursales.find(
+    sucursalElegida = sucursales.find(
       (s) => normalizarSlug(s.nombre) === sucursalParam.toLowerCase() || String(s.id) === sucursalParam
     );
-    if (encontrada) select.value = encontrada.id;
   }
+  if (!sucursalElegida) {
+    // Sin link, usa la última sucursal que se eligió en este dispositivo (la misma que usa el POS),
+    // en vez de arrancar siempre en la primera de la lista.
+    const guardada = localStorage.getItem('elnano_sucursal_id');
+    if (guardada) sucursalElegida = sucursales.find((s) => String(s.id) === guardada);
+  }
+  if (sucursalElegida) select.value = sucursalElegida.id;
 
   if (empleado?.sucursal_id) {
     select.value = empleado.sucursal_id;
@@ -36,8 +43,12 @@ async function cargarSucursales() {
   }
 
   sucursalId = Number(select.value);
+  localStorage.setItem('elnano_sucursal_id', select.value);
   select.addEventListener('change', () => {
     sucursalId = Number(select.value);
+    localStorage.setItem('elnano_sucursal_id', select.value);
+    pedidos = []; // evita que se vea un instante lo de la otra sucursal mientras carga
+    render();
     socket.emit('join_sucursal', sucursalId);
     cargarPedidos();
     cargarPromedio();
@@ -174,13 +185,27 @@ function sonarAviso() {
   } catch (e) {}
 }
 
+// Si se cae la conexión (tablet dormida, wifi), el servidor olvida la sala: hay que volver a
+// unirse y recargar el tablero, porque pudieron llegar pedidos mientras estaba desconectada.
+let conexionPrevia = false;
+socket.on('connect', () => {
+  if (conexionPrevia && sucursalId) {
+    socket.emit('join_sucursal', sucursalId);
+    cargarPedidos();
+    cargarPromedio();
+  }
+  conexionPrevia = true;
+});
+
 socket.on('nuevo_pedido', (pedido) => {
+  if (Number(pedido.sucursal_id) !== sucursalId) return; // de otra sucursal: se ignora
   pedidos.push(pedido);
   render();
   sonarAviso();
 });
 
 socket.on('pedido_actualizado', (pedidoActualizado) => {
+  if (Number(pedidoActualizado.sucursal_id) !== sucursalId) return; // de otra sucursal: se ignora
   const sigueActivo = ['recibido', 'en_preparacion', 'listo'].includes(pedidoActualizado.estado) && !pedidoActualizado.cancelado;
 
   if (!sigueActivo) {
