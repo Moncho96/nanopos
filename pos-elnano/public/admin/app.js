@@ -111,6 +111,11 @@ document.getElementById('btn-ir-pos').addEventListener('click', () => {
 });
 document.getElementById('btn-ir-pos-drawer').addEventListener('click', () => document.getElementById('btn-ir-pos').click());
 
+document.getElementById('btn-menu').addEventListener('click', () => document.getElementById('drawer-overlay').classList.add('abierto'));
+document.getElementById('drawer-overlay').addEventListener('click', (e) => {
+  if (e.target.id === 'drawer-overlay') document.getElementById('drawer-overlay').classList.remove('abierto');
+});
+
 document.getElementById('btn-cerrar-sesion').addEventListener('click', async () => {
   if (!confirm('¿Cerrar sesión?')) return;
   await fetch('/api/logout', { method: 'POST' });
