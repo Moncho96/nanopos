@@ -1895,6 +1895,12 @@ document.getElementById('btn-ir-kds').addEventListener('click', () => {
   window.location.href = slug ? `/kds?sucursal=${slug}` : '/kds';
 });
 
+document.getElementById('btn-cerrar-sesion').addEventListener('click', async () => {
+  if (!confirm('¿Cerrar sesión?')) return;
+  await fetch('/api/logout', { method: 'POST' });
+  window.location.href = '/login';
+});
+
 document.getElementById('btn-ir-admin').addEventListener('click', () => {
   const sucursalActual = state.sucursales.find((s) => String(s.id) === document.getElementById('sucursal-select').value);
   const slug = sucursalActual ? normalizarSlug(sucursalActual.nombre) : '';
