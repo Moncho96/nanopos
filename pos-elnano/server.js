@@ -170,7 +170,14 @@ const io = new Server(server, { cors: { origin: '*' } });
 io.on('connection', (socket) => {
   // Cada pantalla de KDS se une a la "sala" de su sucursal para solo ver sus pedidos
   socket.on('join_sucursal', (sucursalId) => {
-    socket.join(`sucursal_${sucursalId}`);
+    const id = Number(sucursalId);
+    if (!Number.isInteger(id)) return;
+    // Primero sale de cualquier sala de sucursal anterior; si no, al cambiar de sucursal
+    // seguiría recibiendo los pedidos de la otra hasta recargar la página.
+    for (const sala of [...socket.rooms]) {
+      if (sala.startsWith('sucursal_')) socket.leave(sala);
+    }
+    socket.join(`sucursal_${id}`);
   });
 });
 
