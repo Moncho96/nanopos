@@ -1517,6 +1517,8 @@ document.getElementById('btn-aceptar-nuevo-pedido').addEventListener('click', ()
 });
 
 socketPos.on('nuevo_pedido', (pedido) => {
+  // Si llegara uno de otra sucursal, no debe sonar ni mostrar el aviso en esta pantalla
+  if (String(pedido.sucursal_id) !== document.getElementById('sucursal-select').value) return;
   avisarNuevoPedidoPos(pedido);
   cargarPedidosYContar();
   if (document.getElementById('overlay-historial').classList.contains('abierto')) cargarHistorial();
