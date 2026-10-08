@@ -954,10 +954,10 @@ async function cargarInformes() {
         <div style="display:flex;justify-content:space-between"><span>Ventas</span><strong>$${d.ventas.toFixed(2)}</strong></div>
         <div style="display:flex;justify-content:space-between;color:#666"><span>− Gastos registrados</span><span>$${d.gastos.toFixed(2)}</span></div>
         <div style="display:flex;justify-content:space-between;color:#666"><span>− Gastos por caja (Profit First)</span><span>$${d.gastosPorCaja.toFixed(2)}</span></div>
-        <div style="display:flex;justify-content:space-between;color:#666"><span>− Descuentos por lealtad</span><span>$${d.descuentosLealtad.toFixed(2)}</span></div>
-        <div style="display:flex;justify-content:space-between;padding-top:8px;margin-top:4px;border-top:1px solid #eee;font-weight:bold"><span>≈ Resultado del periodo</span><span>$${(d.ventas - d.gastos - d.gastosPorCaja - d.descuentosLealtad).toFixed(2)}</span></div>
+        <div style="display:flex;justify-content:space-between;color:#aaa;font-size:12px"><span>(las ventas ya traen restados $${d.descuentosLealtad.toFixed(2)} de descuentos por lealtad)</span><span></span></div>
+        <div style="display:flex;justify-content:space-between;padding-top:8px;margin-top:4px;border-top:1px solid #eee;font-weight:bold"><span>≈ Resultado del periodo</span><span>$${(d.ventas - d.gastos - d.gastosPorCaja).toFixed(2)}</span></div>
       </div>
-      <div style="font-size:11px;color:#aaa;margin-top:8px">No incluye el costo de los insumos consumidos, solo ventas menos gastos registrados y descuentos.</div>
+      <div style="font-size:11px;color:#aaa;margin-top:8px">No incluye el costo de los insumos consumidos, solo ventas menos gastos registrados.</div>
     </div>
 
     <div class="informes-seccion">
@@ -1039,7 +1039,7 @@ async function cargarInformes() {
 const DRAWER_SOLO_ENCARGADO = [
   'btn-abrir-compra-registro', 'btn-abrir-importar', 'btn-abrir-conteo', 'btn-abrir-compras',
   'btn-abrir-lealtad', 'btn-abrir-resenas', 'btn-abrir-reparto', 'btn-abrir-importar-recetas',
-  'btn-abrir-menu-admin', 'btn-abrir-envios', 'btn-abrir-empleados', 'btn-abrir-profit-first', 'btn-abrir-gastos-pf',
+  'btn-abrir-menu-admin', 'btn-abrir-envios', 'btn-abrir-empleados', 'btn-abrir-profit-first', 'btn-abrir-gastos-pf', 'btn-abrir-dashboard',
 ];
 const DRAWER_CAJERO_O_ENCARGADO = []; // Informes, Clientes y Repartidores quedan visibles a cajero también
 
@@ -3011,6 +3011,347 @@ async function cargarGastosPF() {
     });
   });
 }
+
+// ==================== DASHBOARD ====================
+
+const DASH_COLORES = ['#b8232f', '#3c5a6b', '#4f7942', '#c98a2c'];
+const DASH_MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+const DASH_DIAS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+const DASH_DIAS_LARGO = ['lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado', 'domingo'];
+
+const dashMoneda = (n) => {
+  const v = Math.round(Number(n) || 0);
+  return (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('es-MX'); // -$1,234, no $-1,234
+};
+const dashEntero = (n) => Math.round(Number(n) || 0).toLocaleString('es-MX');
+const dashPct = (n) => (n === null || n === undefined ? '—' : `${Number(n).toFixed(1)}%`);
+
+const dashCortoMoneda = (v) => (v < 0 ? '-$' : '$') + dashCorto(Math.abs(v));
+
+function dashCorto(v) {
+  const a = Math.abs(v);
+  const signo = v < 0 ? '-' : '';
+  if (a >= 1e6) return `${signo}${(a / 1e6).toFixed(1)}M`;
+  if (a >= 1e4) return `${signo}${Math.round(a / 1e3)}k`;
+  if (a >= 1e3) return `${signo}${(a / 1e3).toFixed(1)}k`;
+  return `${signo}${Math.round(a)}`;
+}
+
+function dashFechaCorta(iso) {
+  const [, m, d] = iso.split('-');
+  return `${Number(d)} ${DASH_MESES[Number(m) - 1]}`;
+}
+function dashEtiquetaX(clave, gran) {
+  if (gran === 'mes') {
+    const [y, m] = clave.split('-');
+    return `${DASH_MESES[Number(m) - 1]} ${y.slice(2)}`;
+  }
+  return dashFechaCorta(clave);
+}
+
+// Eje "redondo" (0, 5k, 10k...) para que la gráfica se lea fácil
+function dashEje(min, max, marcas = 4) {
+  if (max === min) max = min + 1;
+  const paso0 = (max - min) / marcas;
+  const magnitud = Math.pow(10, Math.floor(Math.log10(paso0)));
+  const r = paso0 / magnitud;
+  const paso = (r <= 1 ? 1 : r <= 2 ? 2 : r <= 5 ? 5 : 10) * magnitud;
+  return { min: Math.floor(min / paso) * paso, max: Math.ceil(max / paso) * paso, paso };
+}
+
+// Gráfica de líneas en SVG (sin librerías). series: [{ nombre, color, valores, grueso, fmt }]
+function dashGraficaLineas(etiquetas, series, fmtEje) {
+  const W = 720, H = 300, ml = 58, mr = 14, mt = 14, mb = 38;
+  const todos = series.flatMap((s) => s.valores);
+  const eje = dashEje(Math.min(0, ...todos), Math.max(0, ...todos));
+  const n = etiquetas.length;
+  const ancho = W - ml - mr;
+  const alto = H - mt - mb;
+  const x = (i) => ml + (n === 1 ? ancho / 2 : (i / (n - 1)) * ancho);
+  const y = (v) => mt + (1 - (v - eje.min) / (eje.max - eje.min)) * alto;
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img">`;
+  const marcas = Math.round((eje.max - eje.min) / eje.paso);
+  for (let k = 0; k <= marcas; k++) {
+    const v = eje.min + k * eje.paso;
+    const yy = y(v).toFixed(1);
+    svg += `<line x1="${ml}" y1="${yy}" x2="${W - mr}" y2="${yy}" stroke="currentColor" stroke-opacity="${Math.abs(v) < 1e-9 ? 0.45 : 0.12}" />`;
+    svg += `<text x="${ml - 6}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.6">${fmtEje(v)}</text>`;
+  }
+  const cada = Math.max(1, Math.ceil(n / 6));
+  etiquetas.forEach((et, i) => {
+    if (i % cada === 0) {
+      svg += `<text x="${x(i).toFixed(1)}" y="${H - 14}" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.6">${et}</text>`;
+    }
+  });
+  series.forEach((s) => {
+    const puntos = s.valores.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+    svg += `<polyline fill="none" stroke="${s.color}" stroke-width="${s.grueso ? 3 : 2}" stroke-linejoin="round" stroke-linecap="round" points="${puntos}" />`;
+    if (n <= 40) {
+      s.valores.forEach((v, i) => {
+        svg += `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="${s.grueso ? 3 : 2.5}" fill="${s.color}"><title>${escapeHtml(s.nombre)} · ${etiquetas[i]}: ${s.fmt(v)}</title></circle>`;
+      });
+    }
+  });
+  return svg + '</svg>';
+}
+
+// Barras agrupadas (una barra por sucursal en cada categoría)
+function dashGraficaBarras(etiquetas, series) {
+  const W = 720, H = 250, ml = 50, mr = 10, mt = 22, mb = 28;
+  const eje = dashEje(0, Math.max(1, ...series.flatMap((s) => s.valores)));
+  const ancho = W - ml - mr;
+  const alto = H - mt - mb;
+  const grupo = ancho / etiquetas.length;
+  const barAncho = Math.min(34, (grupo * 0.72) / series.length);
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block" role="img">`;
+  const marcas = Math.round((eje.max - eje.min) / eje.paso);
+  for (let k = 0; k <= marcas; k++) {
+    const v = eje.min + k * eje.paso;
+    const yy = (mt + (1 - v / eje.max) * alto).toFixed(1);
+    svg += `<line x1="${ml}" y1="${yy}" x2="${W - mr}" y2="${yy}" stroke="currentColor" stroke-opacity="${k === 0 ? 0.45 : 0.12}" />`;
+    svg += `<text x="${ml - 6}" y="${(Number(yy) + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.6">$${dashCorto(v)}</text>`;
+  }
+  etiquetas.forEach((et, i) => {
+    const centro = ml + i * grupo + grupo / 2;
+    svg += `<text x="${centro.toFixed(1)}" y="${H - 9}" text-anchor="middle" font-size="12" fill="currentColor" fill-opacity="0.7">${et}</text>`;
+    series.forEach((s, j) => {
+      const h = (s.valores[i] / eje.max) * alto;
+      const bx = centro - (series.length * barAncho) / 2 + j * barAncho;
+      svg += `<rect x="${bx.toFixed(1)}" y="${(mt + alto - h).toFixed(1)}" width="${(barAncho - 2).toFixed(1)}" height="${Math.max(0, h).toFixed(1)}" rx="2" fill="${s.color}"><title>${escapeHtml(s.nombre)} · ${et}: ${dashMoneda(s.valores[i])}</title></rect>`;
+      svg += `<text x="${(bx + (barAncho - 2) / 2).toFixed(1)}" y="${(mt + alto - h - 4).toFixed(1)}" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity="0.7">${dashCorto(s.valores[i])}</text>`;
+    });
+  });
+  return svg + '</svg>';
+}
+
+// Cambio contra el periodo anterior: texto, flecha y color (verde = mejoró, rojo = empeoró)
+function dashDelta(actual, anterior, { mejorSiSube = true, pp = false, neutral = false } = {}) {
+  const igual = { texto: '= sin cambio', clase: 'delta-neutro' };
+  if (actual === null || actual === undefined || anterior === null || anterior === undefined) return { texto: '—', clase: 'delta-neutro' };
+  const dif = actual - anterior;
+  let magnitud;
+  let texto;
+  if (pp) {
+    if (Math.abs(dif) < 0.05) return igual;
+    magnitud = dif;
+    texto = `${Math.abs(dif).toFixed(1)} pts`;
+  } else {
+    if (anterior === 0) return actual === 0 ? igual : { texto: 'sin dato previo', clase: 'delta-neutro' };
+    magnitud = (dif / Math.abs(anterior)) * 100;
+    if (Math.abs(magnitud) < 0.05) return igual;
+    texto = `${Math.abs(magnitud).toFixed(1)}%`;
+  }
+  const sube = magnitud > 0;
+  return { texto: `${sube ? '▲' : '▼'} ${texto}`, clase: neutral ? 'delta-neutro' : sube === mejorSiSube ? 'delta-sube' : 'delta-baja' };
+}
+
+const DASH_FILAS = [
+  { k: 'ventasTotales', et: 'Ventas totales', fmt: dashMoneda, destacada: true },
+  { k: 'ventas', et: 'Mostrador, domicilio y web', fmt: dashMoneda, sub: true },
+  { k: 'ventasDidi', et: 'DiDi (captura manual)', fmt: dashMoneda, sub: true },
+  { k: 'pedidos', et: 'Pedidos', fmt: dashEntero },
+  { k: 'ticket', et: 'Ticket promedio', fmt: dashMoneda },
+  { k: 'pctDomicilio', et: '% a domicilio', fmt: dashPct, pp: true, neutral: true },
+  { k: 'pctWeb', et: '% pedidos en línea', fmt: dashPct, pp: true, neutral: true },
+  { k: 'clientesUnicos', et: 'Clientes distintos', fmt: dashEntero },
+  { k: 'gastos', et: 'Gastos', fmt: dashMoneda, mejorSiSube: false },
+  { k: 'resultado', et: 'Resultado estimado', fmt: dashMoneda, destacada: true },
+  { k: 'margen', et: 'Margen estimado', fmt: dashPct, pp: true },
+  { k: 'pctCancelados', et: '% cancelados', fmt: dashPct, pp: true, mejorSiSube: false },
+  { k: 'tiempoMin', et: 'Tiempo hasta estar listo', fmt: (v) => (v === null ? '—' : `${v.toFixed(1)} min`), mejorSiSube: false },
+  { k: 'resenaProm', et: 'Reseña promedio', fmt: (v, m) => (v === null ? '—' : `★ ${v.toFixed(1)} (${m.resenaN})`) },
+  { k: 'descuadre', et: 'Descuadre en cortes', fmt: dashMoneda, neutral: true },
+];
+
+const DASH_METRICAS_GRAFICA = [
+  { k: 'ventas', et: 'Ventas', fmt: dashMoneda, eje: dashCortoMoneda },
+  { k: 'pedidos', et: 'Pedidos', fmt: dashEntero, eje: dashCorto },
+  { k: 'ticket', et: 'Ticket promedio', fmt: dashMoneda, eje: dashCortoMoneda },
+  { k: 'gastos', et: 'Gastos', fmt: dashMoneda, eje: dashCortoMoneda },
+  { k: 'resultado', et: 'Resultado', fmt: dashMoneda, eje: dashCortoMoneda },
+];
+
+let dashDatos = null;
+let dashMetricaActiva = 'ventas';
+let dashSolicitud = 0;
+
+function dashPintarGrafica() {
+  const d = dashDatos;
+  if (!d) return;
+  const varias = d.sucursales.length > 1;
+  const def = DASH_METRICAS_GRAFICA.find((m) => m.k === dashMetricaActiva);
+  const etiquetas = d.serie.etiquetas.map((e) => dashEtiquetaX(e, d.periodo.granularidad));
+
+  const series = [];
+  if (varias) series.push({ nombre: 'Combinado', color: 'currentColor', grueso: true, valores: d.serie.total[def.k], fmt: def.fmt });
+  d.sucursales.forEach((s, i) => {
+    series.push({ nombre: s.nombre, color: DASH_COLORES[i % DASH_COLORES.length], valores: d.serie.porSucursal[s.id][def.k], fmt: def.fmt });
+  });
+
+  document.getElementById('dash-grafica').innerHTML = dashGraficaLineas(etiquetas, series, def.eje);
+  document.getElementById('dash-leyenda').innerHTML = series
+    .map((s) => `<span><i style="background:${s.color === 'currentColor' ? 'currentColor' : s.color}"></i>${escapeHtml(s.nombre)}</span>`)
+    .join('');
+  document.querySelectorAll('[data-metrica-dash]').forEach((b) => b.classList.toggle('activo', b.dataset.metricaDash === dashMetricaActiva));
+}
+
+function renderDashboard() {
+  const d = dashDatos;
+  const cont = document.getElementById('dash-contenido');
+  if (!d.sucursales.length) {
+    cont.innerHTML = '<p style="color:#999;text-align:center;padding:24px">No hay sucursales para mostrar.</p>';
+    return;
+  }
+  const varias = d.sucursales.length > 1;
+  const principal = varias ? d.actual.total : d.actual.porSucursal[d.sucursales[0].id];
+  const anterior = varias ? d.anterior.total : d.anterior.porSucursal[d.sucursales[0].id];
+  const p = d.periodo;
+  const granTexto = { dia: 'por día', semana: 'por semana (de lunes a domingo)', mes: 'por mes' }[p.granularidad];
+
+  const tarjetas = [
+    { et: 'Ventas totales', val: dashMoneda(principal.ventasTotales), delta: dashDelta(principal.ventasTotales, anterior.ventasTotales) },
+    { et: 'Pedidos', val: dashEntero(principal.pedidos), delta: dashDelta(principal.pedidos, anterior.pedidos) },
+    { et: 'Ticket promedio', val: dashMoneda(principal.ticket), delta: dashDelta(principal.ticket, anterior.ticket) },
+    { et: 'Resultado estimado', val: dashMoneda(principal.resultado), delta: dashDelta(principal.resultado, anterior.resultado), extra: principal.margen === null ? '' : `margen ${dashPct(principal.margen)}` },
+  ];
+
+  const columnas = [];
+  if (varias) columnas.push({ nombre: 'Combinado', act: d.actual.total, ant: d.anterior.total });
+  d.sucursales.forEach((s) => columnas.push({ nombre: s.nombre, act: d.actual.porSucursal[s.id], ant: d.anterior.porSucursal[s.id] }));
+
+  const filasTabla = DASH_FILAS.map((f) => {
+    const celdas = columnas
+      .map((c) => {
+        const delta = dashDelta(c.act[f.k], c.ant[f.k], { mejorSiSube: f.mejorSiSube !== false, pp: !!f.pp, neutral: !!f.neutral });
+        return `<td>${f.fmt(c.act[f.k], c.act)}<div class="dash-delta ${delta.clase}">${delta.texto}</div></td>`;
+      })
+      .join('');
+    return `<tr class="${f.destacada ? 'destacada' : ''} ${f.sub ? 'sub' : ''}"><td>${f.et}</td>${celdas}</tr>`;
+  }).join('');
+
+  // Promedio de ventas por día de la semana (una barra por sucursal)
+  const barras = dashGraficaBarras(
+    DASH_DIAS,
+    d.sucursales.map((s, i) => ({ nombre: s.nombre, color: DASH_COLORES[i % DASH_COLORES.length], valores: d.diaSemana.porSucursal[s.id] }))
+  );
+  const semana = varias ? d.diaSemana.total : d.diaSemana.porSucursal[d.sucursales[0].id];
+  const iMejor = semana.indexOf(Math.max(...semana));
+  const iPeor = semana.indexOf(Math.min(...semana));
+  const insight = Math.max(...semana) > 0
+    ? `Mejor día: <strong>${DASH_DIAS_LARGO[iMejor]}</strong> (${dashMoneda(semana[iMejor])} en promedio) · Más flojo: <strong>${DASH_DIAS_LARGO[iPeor]}</strong> (${dashMoneda(semana[iPeor])}).`
+    : '';
+
+  cont.innerHTML = `
+    <div class="dash-sub">
+      ${dashFechaCorta(p.desde)} – ${dashFechaCorta(p.hasta)} · ${p.dias} día${p.dias === 1 ? '' : 's'}.
+      Las flechas comparan contra los ${p.dias} día${p.dias === 1 ? '' : 's'} anteriores (${dashFechaCorta(p.desdeAnterior)} – ${dashFechaCorta(p.hastaAnterior)}).
+      ${varias ? '<br>Compara todas las sucursales; el selector de arriba no aplica en esta pantalla.' : ''}
+    </div>
+
+    <div class="dash-kpis">
+      ${tarjetas
+        .map((t) => `<div class="dash-kpi"><div class="et">${t.et}</div><div class="val">${t.val}</div>
+          <div class="dash-delta ${t.delta.clase}">${t.delta.texto}${t.extra ? ` · <span style="color:#888;font-weight:500">${t.extra}</span>` : ''}</div></div>`)
+        .join('')}
+    </div>
+
+    <div class="dash-card">
+      <h3>Evolución ${granTexto}</h3>
+      <div class="dash-metricas">
+        ${DASH_METRICAS_GRAFICA.map((m) => `<button data-metrica-dash="${m.k}">${m.et}</button>`).join('')}
+      </div>
+      <div class="dash-chart" id="dash-grafica"></div>
+      <div class="dash-leyenda" id="dash-leyenda"></div>
+    </div>
+
+    <div class="dash-card">
+      <h3>${varias ? 'Combinado y por sucursal' : 'Detalle'}</h3>
+      <div class="dash-tabla-wrap">
+        <table class="dash-tabla">
+          <thead><tr><th></th>${columnas.map((c) => `<th>${escapeHtml(c.nombre)}</th>`).join('')}</tr></thead>
+          <tbody>${filasTabla}</tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="dash-card">
+      <h3>Ventas promedio por día de la semana</h3>
+      <div class="dash-chart">${barras}</div>
+      <div class="dash-leyenda">
+        ${d.sucursales.map((s, i) => `<span><i style="background:${DASH_COLORES[i % DASH_COLORES.length]}"></i>${escapeHtml(s.nombre)}</span>`).join('')}
+      </div>
+      ${insight ? `<div class="dash-sub" style="margin:10px 0 0">${insight}</div>` : ''}
+    </div>
+
+    <div class="dash-sub">
+      <strong>Cómo se calcula:</strong> las <em>ventas totales</em> suman los pedidos cobrados (ya con descuentos de lealtad y envío incluidos) más las ventas de DiDi capturadas en el corte.
+      Los <em>gastos</em> suman los del corte y los de "Gastos por caja". El <em>resultado</em> es estimado: no incluye el costo de insumos ni compras de inventario registradas aparte.
+      El ticket promedio usa solo pedidos del sistema (DiDi no genera pedidos aquí).
+    </div>`;
+
+  document.querySelectorAll('[data-metrica-dash]').forEach((b) => {
+    b.addEventListener('click', () => {
+      dashMetricaActiva = b.dataset.metricaDash;
+      dashPintarGrafica();
+    });
+  });
+  dashPintarGrafica();
+}
+
+async function cargarDashboard() {
+  const desde = document.getElementById('dash-desde').value;
+  const hasta = document.getElementById('dash-hasta').value;
+  const gran = document.getElementById('dash-gran').value;
+  const cont = document.getElementById('dash-contenido');
+  if (!desde || !hasta) return;
+
+  const miSolicitud = ++dashSolicitud; // por si se tocan varios botones seguidos, solo cuenta el último
+  cont.innerHTML = '<p style="color:#999;text-align:center;padding:30px">Calculando...</p>';
+  try {
+    const resp = await fetch(`/api/dashboard?fecha_desde=${desde}&fecha_hasta=${hasta}${gran ? `&granularidad=${gran}` : ''}`);
+    const datos = await resp.json();
+    if (miSolicitud !== dashSolicitud) return;
+    if (!resp.ok) {
+      cont.innerHTML = `<p style="color:#b8232f;text-align:center;padding:24px">${escapeHtml(datos.error || 'No se pudo cargar')}</p>`;
+      return;
+    }
+    dashDatos = datos;
+    renderDashboard();
+  } catch (err) {
+    if (miSolicitud !== dashSolicitud) return;
+    cont.innerHTML = '<p style="color:#b8232f;text-align:center;padding:24px">No se pudo conectar. Revisa tu internet e intenta de nuevo.</p>';
+  }
+}
+
+function aplicarPresetDashboard(preset) {
+  document.querySelectorAll('.chip-fecha-dash').forEach((b) => b.classList.toggle('activo', b.dataset.presetDash === preset));
+  const hoy = new Date(fechaNegocioActual() + 'T12:00:00');
+  let desde = new Date(hoy);
+  if (preset === 'mes') desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  else if (preset === 'anio') desde = new Date(hoy.getFullYear(), 0, 1);
+  else desde.setDate(hoy.getDate() - (Number(preset) - 1));
+  document.getElementById('dash-desde').value = fechaLocalISO(desde);
+  document.getElementById('dash-hasta').value = fechaLocalISO(hoy);
+  cargarDashboard();
+}
+
+document.getElementById('btn-abrir-dashboard').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.remove('abierto');
+  document.getElementById('overlay-dashboard').classList.add('abierto');
+  if (!document.getElementById('dash-desde').value) aplicarPresetDashboard('30');
+});
+document.getElementById('btn-cerrar-dashboard').addEventListener('click', () => {
+  document.getElementById('overlay-dashboard').classList.remove('abierto');
+});
+document.querySelectorAll('.chip-fecha-dash').forEach((b) => {
+  b.addEventListener('click', () => aplicarPresetDashboard(b.dataset.presetDash));
+});
+document.getElementById('btn-consultar-dash').addEventListener('click', () => {
+  document.querySelectorAll('.chip-fecha-dash').forEach((b) => b.classList.remove('activo')); // fechas a mano
+  cargarDashboard();
+});
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
