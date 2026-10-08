@@ -207,6 +207,35 @@
   .chip-fecha-rep.activo { background: #b8232f; color: white; border-color: #b8232f; }
   .chip-fecha-gpf { padding: 8px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; font-size: 13px; cursor: pointer; }
   .chip-fecha-gpf.activo { background: #b8232f; color: white; border-color: #b8232f; }
+  .chip-fecha-dash { padding: 8px 14px; border-radius: 20px; border: 1px solid #ddd; background: white; font-size: 13px; cursor: pointer; }
+  .chip-fecha-dash.activo { background: #b8232f; color: white; border-color: #b8232f; }
+  .dash-sub { font-size: 12px; color: #888; margin: 4px 0 12px; line-height: 1.5; }
+  .dash-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+  .dash-kpi, .dash-card { background: white; border-radius: 12px; padding: 14px; }
+  .dash-card { margin-bottom: 12px; }
+  .dash-card h3 { margin: 0 0 10px; font-size: 14px; }
+  .dash-kpi .et { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: .4px; }
+  .dash-kpi .val { font-size: 22px; font-weight: 800; margin: 4px 0 2px; }
+  .delta-sube { color: #1a7d3a; } .delta-baja { color: #b8232f; } .delta-neutro { color: #999; }
+  .dash-delta { font-size: 11.5px; font-weight: 600; }
+  .dash-metricas { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .dash-metricas button { padding: 6px 12px; border-radius: 16px; border: 1px solid #ddd; background: white; font-size: 12.5px; cursor: pointer; }
+  .dash-metricas button.activo { background: #2a231c; color: white; border-color: #2a231c; }
+  .dash-leyenda { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; margin-top: 8px; }
+  .dash-leyenda i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  .dash-chart { color: #2a231c; }
+  .dash-tabla-wrap { overflow-x: auto; }
+  .dash-tabla { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 460px; }
+  .dash-tabla th { text-align: right; padding: 6px 8px; font-size: 12px; color: #888; border-bottom: 1px solid #eee; }
+  .dash-tabla th:first-child, .dash-tabla td:first-child { text-align: left; }
+  .dash-tabla td { text-align: right; padding: 7px 8px; border-bottom: 1px solid #f2f2f2; vertical-align: top; }
+  .dash-tabla tr.destacada td { font-weight: 700; background: rgba(184, 35, 47, 0.05); }
+  .dash-tabla tr.sub td:first-child { color: #888; padding-left: 16px; font-size: 12px; }
+  body.dark .dash-kpi, body.dark .dash-card { background: #1e1e1e; color: #eee; }
+  body.dark .dash-chart { color: #eee; }
+  body.dark .dash-tabla th { border-color: #333; } body.dark .dash-tabla td { border-color: #2a2a2a; }
+  body.dark .dash-metricas button, body.dark .chip-fecha-dash { background: #1e1e1e; color: #eee; border-color: #444; }
+  body.dark .dash-metricas button.activo, body.dark .chip-fecha-dash.activo { background: #b8232f; border-color: #b8232f; }
   .chip-fecha.activo { background: #b8232f; color: white; border-color: #b8232f; }
   .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 14px 0; }
   .kpi-card { background: white; border-radius: 12px; padding: 14px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
@@ -356,6 +385,7 @@
 </header>
 
 <div class="admin-grid">
+  <button class="admin-tile" id="btn-abrir-dashboard"><span class="emoji">📊</span><span class="nombre">Dashboard</span></button>
   <button class="admin-tile" id="btn-abrir-menu-admin"><span class="emoji">🍽️</span><span class="nombre">Menú</span></button>
   <button class="admin-tile" id="btn-abrir-conteo"><span class="emoji">📦</span><span class="nombre">Conteo de inventario</span></button>
   <button class="admin-tile" id="btn-abrir-compra-registro"><span class="emoji">📷</span><span class="nombre">Registrar compra</span></button>
@@ -591,6 +621,35 @@
     <div id="pf-import-status" style="font-size:12px;margin-top:6px"></div>
   </div>
   <div id="pf-categorias" style="padding:0 0 24px"></div>
+</div>
+
+<!-- Dashboard -->
+<div class="full-overlay" id="overlay-dashboard">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-dashboard">✕</button>
+    <span class="titulo">Dashboard</span>
+  </div>
+
+  <div class="form-inline" style="flex-wrap:wrap">
+    <button class="chip-fecha-dash" data-preset-dash="mes">Este mes</button>
+    <button class="chip-fecha-dash" data-preset-dash="30">30 días</button>
+    <button class="chip-fecha-dash" data-preset-dash="90">90 días</button>
+    <button class="chip-fecha-dash" data-preset-dash="180">6 meses</button>
+    <button class="chip-fecha-dash" data-preset-dash="anio">Este año</button>
+  </div>
+  <div class="form-inline" style="flex-wrap:wrap">
+    <input type="date" id="dash-desde" />
+    <input type="date" id="dash-hasta" />
+    <select id="dash-gran" style="padding:8px;border-radius:8px;border:1px solid #ddd">
+      <option value="">Agrupar: automático</option>
+      <option value="dia">Por día</option>
+      <option value="semana">Por semana</option>
+      <option value="mes">Por mes</option>
+    </select>
+    <button id="btn-consultar-dash">Consultar</button>
+  </div>
+
+  <div id="dash-contenido" style="padding:0 12px 32px"></div>
 </div>
 
 <!-- Gastos por caja de Profit First -->
