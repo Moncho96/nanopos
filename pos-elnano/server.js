@@ -164,6 +164,10 @@ app.get('/', (req, res) => res.redirect('/pos'));
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
+// Red de seguridad: un error inesperado en una consulta no debe tumbar todo el servidor (y con él
+// el POS y la cocina de las dos sucursales). Se deja registrado en el log para poder revisarlo.
+process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
@@ -2575,6 +2579,259 @@ function filtroFechaYSucursal(alias, columnaFecha, fechaDesde, fechaHasta, sucur
   }
   return sql;
 }
+
+// ---------- Dashboard comparativo de sucursales ----------
+const fechaISOaUTC = (f) => new Date(`${f}T00:00:00Z`);
+const aISO = (d) => d.toISOString().slice(0, 10);
+function sumarDiasISO(f, n) {
+  const d = fechaISOaUTC(f);
+  d.setUTCDate(d.getUTCDate() + n);
+  return aISO(d);
+}
+const diasEntreISO = (desde, hasta) => Math.round((fechaISOaUTC(hasta) - fechaISOaUTC(desde)) / 86400000) + 1;
+function claveBucket(f, gran) {
+  if (gran === 'mes') return `${f.slice(0, 7)}-01`;
+  if (gran === 'semana') {
+    const d = fechaISOaUTC(f);
+    d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7)); // la semana empieza en lunes
+    return aISO(d);
+  }
+  return f;
+}
+const redondear2 = (n) => Math.round(Number(n || 0) * 100) / 100;
+
+function crudoVacio() {
+  return {
+    pedidos: 0, ventas: 0, envios: 0, descuentos: 0, domicilio: 0, web: 0, clientesUnicos: 0,
+    creados: 0, cancelados: 0, tiempoSeg: 0, tiempoN: 0, resenaSuma: 0, resenaN: 0,
+    gastosCorte: 0, gastosCaja: 0, didi: 0, descuadre: 0, cortes: 0,
+  };
+}
+
+// Números "crudos" por sucursal para un rango de fechas (de negocio, con corte a las 6am)
+async function metricasCrudasDashboard(desde, hasta) {
+  const p = [desde, hasta];
+  const fPedido = fechaNegocioSQL('p.creado_en');
+  const [ventas, creados, tiempos, resenas, gastosCorte, gastosCaja, cortes] = await Promise.all([
+    pool.query(
+      `SELECT p.sucursal_id, COUNT(*)::int AS pedidos, COALESCE(SUM(p.total),0) AS ventas,
+              COALESCE(SUM(p.costo_envio),0) AS envios, COALESCE(SUM(p.descuento_lealtad),0) AS descuentos,
+              COUNT(*) FILTER (WHERE p.tipo = 'domicilio')::int AS domicilio,
+              COUNT(*) FILTER (WHERE p.origen = 'web')::int AS web,
+              COUNT(DISTINCT p.cliente_id)::int AS clientes_unicos
+       FROM pedidos p WHERE p.cancelado = false AND p.pagado = true AND ${fPedido} BETWEEN $1 AND $2
+       GROUP BY p.sucursal_id`, p),
+    pool.query(
+      `SELECT p.sucursal_id, COUNT(*)::int AS creados, COUNT(*) FILTER (WHERE p.cancelado)::int AS cancelados
+       FROM pedidos p WHERE ${fPedido} BETWEEN $1 AND $2 GROUP BY p.sucursal_id`, p),
+    pool.query(
+      `SELECT p.sucursal_id, COALESCE(SUM(EXTRACT(EPOCH FROM (p.listo_en - p.creado_en))),0) AS seg, COUNT(*)::int AS n
+       FROM pedidos p WHERE p.listo_en IS NOT NULL AND p.cancelado = false AND ${fPedido} BETWEEN $1 AND $2
+       GROUP BY p.sucursal_id`, p),
+    pool.query(
+      `SELECT r.sucursal_id, COALESCE(SUM(r.calificacion),0)::int AS suma, COUNT(*)::int AS n
+       FROM resenas r WHERE ${fechaNegocioSQL('r.creado_en')} BETWEEN $1 AND $2 GROUP BY r.sucursal_id`, p),
+    pool.query(
+      `SELECT g.sucursal_id, COALESCE(SUM(g.monto),0) AS total FROM gastos g
+       WHERE ${fechaNegocioSQL('g.creado_en')} BETWEEN $1 AND $2 GROUP BY g.sucursal_id`, p),
+    pool.query(
+      `SELECT g.sucursal_id, COALESCE(SUM(g.monto),0) AS total FROM gastos_profit_first g
+       WHERE g.fecha BETWEEN $1 AND $2 GROUP BY g.sucursal_id`, p),
+    pool.query(
+      `SELECT c.sucursal_id, COALESCE(SUM(c.ventas_didi),0) AS didi, COALESCE(SUM(c.diferencia),0) AS descuadre, COUNT(*)::int AS cortes
+       FROM cortes c WHERE c.fecha BETWEEN $1 AND $2 GROUP BY c.sucursal_id`, p),
+  ]);
+
+  const porSucursal = {};
+  const get = (id) => (porSucursal[id] = porSucursal[id] || crudoVacio());
+  ventas.rows.forEach((r) => Object.assign(get(r.sucursal_id), {
+    pedidos: r.pedidos, ventas: Number(r.ventas), envios: Number(r.envios), descuentos: Number(r.descuentos),
+    domicilio: r.domicilio, web: r.web, clientesUnicos: r.clientes_unicos,
+  }));
+  creados.rows.forEach((r) => Object.assign(get(r.sucursal_id), { creados: r.creados, cancelados: r.cancelados }));
+  tiempos.rows.forEach((r) => Object.assign(get(r.sucursal_id), { tiempoSeg: Number(r.seg), tiempoN: r.n }));
+  resenas.rows.forEach((r) => Object.assign(get(r.sucursal_id), { resenaSuma: r.suma, resenaN: r.n }));
+  gastosCorte.rows.forEach((r) => (get(r.sucursal_id).gastosCorte = Number(r.total)));
+  gastosCaja.rows.forEach((r) => (get(r.sucursal_id).gastosCaja = Number(r.total)));
+  cortes.rows.forEach((r) => Object.assign(get(r.sucursal_id), { didi: Number(r.didi), descuadre: Number(r.descuadre), cortes: r.cortes }));
+  return porSucursal;
+}
+
+function sumarCrudos(lista) {
+  const t = crudoVacio();
+  lista.forEach((c) => Object.keys(t).forEach((k) => (t[k] += c[k])));
+  return t;
+}
+
+// Convierte los números crudos en las métricas que se muestran
+function armarMetricasDashboard(c) {
+  const ventasTotales = c.ventas + c.didi;
+  const gastos = c.gastosCorte + c.gastosCaja;
+  const resultado = ventasTotales - gastos;
+  return {
+    ventasTotales: redondear2(ventasTotales),
+    ventas: redondear2(c.ventas),
+    ventasDidi: redondear2(c.didi),
+    pedidos: c.pedidos,
+    ticket: c.pedidos ? redondear2(c.ventas / c.pedidos) : 0,
+    envios: redondear2(c.envios),
+    descuentos: redondear2(c.descuentos),
+    pctDomicilio: c.pedidos ? redondear2((c.domicilio / c.pedidos) * 100) : 0,
+    pctWeb: c.pedidos ? redondear2((c.web / c.pedidos) * 100) : 0,
+    clientesUnicos: c.clientesUnicos,
+    gastos: redondear2(gastos),
+    resultado: redondear2(resultado),
+    margen: ventasTotales > 0 ? redondear2((resultado / ventasTotales) * 100) : null,
+    pctCancelados: c.creados ? redondear2((c.cancelados / c.creados) * 100) : 0,
+    tiempoMin: c.tiempoN ? redondear2(c.tiempoSeg / c.tiempoN / 60) : null,
+    resenaProm: c.resenaN ? redondear2(c.resenaSuma / c.resenaN) : null,
+    resenaN: c.resenaN,
+    descuadre: redondear2(c.descuadre),
+    cortes: c.cortes,
+  };
+}
+
+app.get('/api/dashboard', requierePuesto(), async (req, res) => {
+  try {
+    const { fecha_desde: desde, fecha_hasta: hasta } = req.query;
+    // Fecha real (no solo con forma de fecha): "2026-13-45" no pasa
+    const fechaValida = (f) => {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(f || '')) return false;
+      const d = fechaISOaUTC(f);
+      return !Number.isNaN(d.getTime()) && aISO(d) === f;
+    };
+    if (!fechaValida(desde) || !fechaValida(hasta)) return res.status(400).json({ error: 'Las fechas no son válidas' });
+    const dias = diasEntreISO(desde, hasta);
+    if (dias < 1) return res.status(400).json({ error: 'La fecha inicial debe ser anterior a la final' });
+    if (dias > 731) return res.status(400).json({ error: 'El rango máximo es de 2 años' });
+
+    const gran = ['dia', 'semana', 'mes'].includes(req.query.granularidad)
+      ? req.query.granularidad
+      : dias <= 45 ? 'dia' : dias <= 200 ? 'semana' : 'mes';
+
+    const { rows: todasSucursales } = await pool.query('SELECT id, nombre FROM sucursales ORDER BY id');
+    // Si el usuario tiene una sola sucursal asignada, solo ve esa
+    const bloqueada = req.empleado?.sucursal_id;
+    const sucursales = bloqueada ? todasSucursales.filter((s) => s.id === bloqueada) : todasSucursales;
+    const ids = sucursales.map((s) => s.id);
+
+    const desdeAnterior = sumarDiasISO(desde, -dias);
+    const hastaAnterior = sumarDiasISO(desde, -1);
+    const [crudoActual, crudoAnterior] = await Promise.all([
+      metricasCrudasDashboard(desde, hasta),
+      metricasCrudasDashboard(desdeAnterior, hastaAnterior),
+    ]);
+
+    const empaquetar = (crudo) => {
+      const lista = ids.map((id) => crudo[id] || crudoVacio());
+      const porSucursal = {};
+      ids.forEach((id, i) => (porSucursal[id] = armarMetricasDashboard(lista[i])));
+      const total = sumarCrudos(lista);
+      // Los clientes distintos no se pueden sumar entre sucursales (uno puede comprar en ambas)
+      return { total: armarMetricasDashboard(total), porSucursal, totalCrudo: total };
+    };
+    const actual = empaquetar(crudoActual);
+    const anterior = empaquetar(crudoAnterior);
+
+    if (ids.length > 1) {
+      const [{ rows: unicos }, { rows: unicosAnt }] = await Promise.all([
+        pool.query(
+          `SELECT COUNT(DISTINCT p.cliente_id)::int AS n FROM pedidos p
+           WHERE p.cancelado = false AND p.pagado = true AND ${fechaNegocioSQL('p.creado_en')} BETWEEN $1 AND $2`,
+          [desde, hasta]),
+        pool.query(
+          `SELECT COUNT(DISTINCT p.cliente_id)::int AS n FROM pedidos p
+           WHERE p.cancelado = false AND p.pagado = true AND ${fechaNegocioSQL('p.creado_en')} BETWEEN $1 AND $2`,
+          [desdeAnterior, hastaAnterior]),
+      ]);
+      actual.total.clientesUnicos = unicos[0].n;
+      anterior.total.clientesUnicos = unicosAnt[0].n;
+    }
+    delete actual.totalCrudo;
+    delete anterior.totalCrudo;
+
+    // ---- Serie en el tiempo (se arma por día y se agrupa en JS: día / semana / mes) ----
+    const fPedido = fechaNegocioSQL('p.creado_en');
+    const pr = [desde, hasta];
+    const [pedDia, gasDia, gasCajaDia, didiDia] = await Promise.all([
+      pool.query(
+        `SELECT p.sucursal_id, to_char(${fPedido}, 'YYYY-MM-DD') AS dia, COUNT(*)::int AS pedidos, COALESCE(SUM(p.total),0) AS ventas
+         FROM pedidos p WHERE p.cancelado = false AND p.pagado = true AND ${fPedido} BETWEEN $1 AND $2 GROUP BY 1, 2`, pr),
+      pool.query(
+        `SELECT g.sucursal_id, to_char(${fechaNegocioSQL('g.creado_en')}, 'YYYY-MM-DD') AS dia, COALESCE(SUM(g.monto),0) AS total
+         FROM gastos g WHERE ${fechaNegocioSQL('g.creado_en')} BETWEEN $1 AND $2 GROUP BY 1, 2`, pr),
+      pool.query(
+        `SELECT g.sucursal_id, to_char(g.fecha, 'YYYY-MM-DD') AS dia, COALESCE(SUM(g.monto),0) AS total
+         FROM gastos_profit_first g WHERE g.fecha BETWEEN $1 AND $2 GROUP BY 1, 2`, pr),
+      pool.query(
+        `SELECT c.sucursal_id, to_char(c.fecha, 'YYYY-MM-DD') AS dia, COALESCE(SUM(c.ventas_didi),0) AS total
+         FROM cortes c WHERE c.fecha BETWEEN $1 AND $2 GROUP BY 1, 2`, pr),
+    ]);
+
+    const diario = {}; // diario[sucursal][fecha] = { ventasPos, pedidos, didi, gastos }
+    ids.forEach((id) => (diario[id] = {}));
+    const celda = (id, dia) => (diario[id][dia] = diario[id][dia] || { ventasPos: 0, pedidos: 0, didi: 0, gastos: 0 });
+    pedDia.rows.forEach((r) => { if (diario[r.sucursal_id]) { const c = celda(r.sucursal_id, r.dia); c.ventasPos += Number(r.ventas); c.pedidos += r.pedidos; } });
+    gasDia.rows.forEach((r) => { if (diario[r.sucursal_id]) celda(r.sucursal_id, r.dia).gastos += Number(r.total); });
+    gasCajaDia.rows.forEach((r) => { if (diario[r.sucursal_id]) celda(r.sucursal_id, r.dia).gastos += Number(r.total); });
+    didiDia.rows.forEach((r) => { if (diario[r.sucursal_id]) celda(r.sucursal_id, r.dia).didi += Number(r.total); });
+
+    const claves = [];
+    const vistas = new Set();
+    for (let i = 0; i < dias; i++) {
+      const k = claveBucket(sumarDiasISO(desde, i), gran);
+      if (!vistas.has(k)) { vistas.add(k); claves.push(k); }
+    }
+    const indiceClave = Object.fromEntries(claves.map((k, i) => [k, i]));
+    const nuevaSerie = () => claves.map(() => ({ ventasPos: 0, pedidos: 0, didi: 0, gastos: 0 }));
+    const serieCruda = { total: nuevaSerie() };
+    ids.forEach((id) => (serieCruda[id] = nuevaSerie()));
+    const sumaSemana = { total: Array(7).fill(0) };
+    ids.forEach((id) => (sumaSemana[id] = Array(7).fill(0)));
+    const diasPorSemana = Array(7).fill(0);
+
+    for (let i = 0; i < dias; i++) {
+      const f = sumarDiasISO(desde, i);
+      const idx = indiceClave[claveBucket(f, gran)];
+      const dow = (fechaISOaUTC(f).getUTCDay() + 6) % 7; // 0 = lunes ... 6 = domingo
+      diasPorSemana[dow] += 1;
+      ids.forEach((id) => {
+        const c = diario[id][f];
+        if (!c) return;
+        ['ventasPos', 'pedidos', 'didi', 'gastos'].forEach((k) => {
+          serieCruda[id][idx][k] += c[k];
+          serieCruda.total[idx][k] += c[k];
+        });
+        sumaSemana[id][dow] += c.ventasPos + c.didi;
+        sumaSemana.total[dow] += c.ventasPos + c.didi;
+      });
+    }
+    const valoresSerie = (celdas) => ({
+      ventas: celdas.map((c) => redondear2(c.ventasPos + c.didi)),
+      pedidos: celdas.map((c) => c.pedidos),
+      ticket: celdas.map((c) => (c.pedidos ? redondear2(c.ventasPos / c.pedidos) : 0)),
+      gastos: celdas.map((c) => redondear2(c.gastos)),
+      resultado: celdas.map((c) => redondear2(c.ventasPos + c.didi - c.gastos)),
+    });
+    const serie = { etiquetas: claves, total: valoresSerie(serieCruda.total), porSucursal: {} };
+    ids.forEach((id) => (serie.porSucursal[id] = valoresSerie(serieCruda[id])));
+    const promedioSemana = (arr) => arr.map((v, i) => (diasPorSemana[i] ? redondear2(v / diasPorSemana[i]) : 0));
+    const diaSemana = { total: promedioSemana(sumaSemana.total), porSucursal: {} };
+    ids.forEach((id) => (diaSemana.porSucursal[id] = promedioSemana(sumaSemana[id])));
+
+    res.json({
+      periodo: { desde, hasta, dias, desdeAnterior, hastaAnterior, granularidad: gran },
+      sucursales,
+      actual,
+      anterior,
+      serie,
+      diaSemana,
+    });
+  } catch (err) {
+    console.error('Error en /api/dashboard:', err);
+    res.status(500).json({ error: 'No se pudo calcular el dashboard' });
+  }
+});
 
 app.get('/api/informes', requierePuesto('cajero'), async (req, res) => {
   const { sucursal_id, fecha_desde, fecha_hasta } = req.query;
