@@ -91,6 +91,34 @@
   .prod-tile .nombre { font-size: 12.5px; font-weight: 600; line-height: 1.3; min-height: 32px; }
   .prod-tile .precio { font-size: 12px; color: #888; margin-top: 4px; }
 
+  /* ---- Pedido DiDi (solo inventario) ---- */
+  .didi-header { background: #5a2ca0; }
+  .didi-cuerpo { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+  .didi-filtros { padding: 10px 12px 6px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; flex-shrink: 0; }
+  .didi-filtros input { padding: 10px; border-radius: 8px; border: 1px solid #ddd; font-size: 14px; width: 100%; box-sizing: border-box; font-family: inherit; }
+  .didi-cats { display: flex; gap: 6px; overflow-x: auto; padding: 4px 12px 8px; flex-shrink: 0; -webkit-overflow-scrolling: touch; }
+  .didi-cat { flex: 0 0 auto; padding: 7px 14px; border-radius: 16px; border: 1px solid #ddd; background: white; font-size: 13px; font-weight: 600; color: #555; cursor: pointer; white-space: nowrap; font-family: inherit; }
+  .didi-cat.activo { background: #5a2ca0; border-color: #5a2ca0; color: white; }
+  .didi-grid { flex: 1; overflow-y: auto; padding: 4px 12px 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px; align-content: start; min-height: 0; }
+  .didi-grid .prod-tile { position: relative; }
+  .didi-grid .prod-tile.con-cantidad { outline: 2px solid #5a2ca0; }
+  .didi-badge { position: absolute; top: 6px; right: 6px; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 12px; background: #5a2ca0; color: white; font-size: 13px; font-weight: 800; display: flex; align-items: center; justify-content: center; box-sizing: border-box; }
+  .didi-pie { background: white; border-top: 1px solid #ddd; padding: 10px 12px; flex-shrink: 0; max-height: 42vh; display: flex; flex-direction: column; gap: 8px; }
+  .didi-lineas { overflow-y: auto; min-height: 0; }
+  .didi-linea { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+  .didi-linea:last-child { border-bottom: none; }
+  .didi-linea .txt { flex: 1; min-width: 0; font-weight: 600; }
+  .didi-linea small { color: #888; display: block; font-weight: 400; }
+  .didi-linea button { width: 34px; height: 34px; border-radius: 8px; border: 1px solid #ccc; background: white; font-size: 18px; font-weight: 700; cursor: pointer; color: #333; }
+  .didi-linea .cant { min-width: 24px; text-align: center; font-weight: 800; }
+  .didi-vacio { color: #999; font-size: 13px; text-align: center; padding: 6px 0; }
+  .btn-didi-registrar { width: 100%; padding: 14px; border: none; border-radius: 10px; background: #5a2ca0; color: white; font-size: 16px; font-weight: 800; cursor: pointer; font-family: inherit; }
+  .btn-didi-registrar:disabled { background: #b9a6d6; cursor: default; }
+  body.dark .didi-filtros input, body.dark .didi-cat, body.dark .didi-linea button { background: #2a2a2a; color: #eee; border-color: #444; }
+  body.dark .didi-cat.activo { background: #5a2ca0; border-color: #5a2ca0; color: white; }
+  body.dark .didi-pie { background: #1e1e1e; border-color: #333; }
+  body.dark .didi-linea { border-color: #2a2a2a; }
+
   .ticket-panel { width: 320px; background: white; border-left: 1px solid #eee; display: flex; flex-direction: column; flex-shrink: 0; }
   @media (max-width: 850px) { .ticket-panel { width: 260px; } .cat-sidebar { width: 78px; } }
   .ticket-header { padding: 12px; border-bottom: 1px solid #eee; }
@@ -285,6 +313,7 @@
       <button data-tipo="mesa">🍽️ En el local (mesa)</button>
       <button data-tipo="para_llevar">🥡 Para llevar</button>
       <button data-tipo="domicilio">🛵 A domicilio</button>
+      <button data-didi="1" style="border-top:1px solid #eee;color:#5a2ca0;font-weight:700">🛵 Pedido DiDi <span style="font-weight:400;font-size:11px">(solo inventario)</span></button>
     </div>
   </div>
 </div>
@@ -377,6 +406,27 @@
     <button class="item" id="btn-ir-admin" style="border-top:1px solid #eee;margin-top:6px;padding-top:14px">⚙️ Administración</button>
     <div id="drawer-usuario" style="padding:10px 4px;font-size:12px;color:#999;border-top:1px solid #eee;margin-top:6px"></div>
     <button class="item" id="btn-cerrar-sesion" style="color:#b8232f">🚪 Cerrar sesión</button>
+  </div>
+</div>
+
+<!-- Pedido DiDi (solo inventario) -->
+<div class="overlay" id="overlay-didi">
+  <div class="overlay-header didi-header">
+    <button id="btn-didi-cerrar">✕</button>
+    <span class="titulo">🛵 Pedido DiDi <span style="font-weight:400;font-size:12px;opacity:.85">· solo inventario, sin monto</span></span>
+  </div>
+  <div class="didi-cuerpo">
+    <div class="didi-filtros">
+      <input type="text" id="didi-referencia" placeholder="N.º de pedido DiDi (opcional)" maxlength="20" autocomplete="off" />
+      <input type="text" id="didi-buscar" placeholder="Buscar producto…" autocomplete="off" />
+    </div>
+    <div class="didi-cats" id="didi-cats"></div>
+    <div class="didi-grid" id="didi-grid"></div>
+  </div>
+  <div class="didi-pie">
+    <div class="didi-lineas" id="didi-lineas"></div>
+    <div id="didi-error" style="color:#b8232f;font-size:13px;font-weight:600"></div>
+    <button class="btn-didi-registrar" id="btn-didi-registrar">Registrar pedido DiDi</button>
   </div>
 </div>
 

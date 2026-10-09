@@ -184,19 +184,26 @@ function renderPedidoRow(pedido) {
   const fechaCorta = new Date(pedido.creado_en).toLocaleDateString('es-MX', { day: '2-digit', month: 'short' });
   const itemsTexto = (pedido.items || [])
     .filter((it) => !it.cancelado)
-    .map((it) => `${it.cantidad}x ${it.producto_nombre}`)
+    .map((it) => {
+      // La variante (maíz/harina, pieza/orden…) define cuánto inventario se descontó, así que se muestra
+      const variante = (it.opciones_seleccionadas || []).filter((o) => o.tipo === 'variante').map((o) => o.nombre).join(', ');
+      return `${it.cantidad}x ${it.producto_nombre}${variante ? ` (${variante})` : ''}`;
+    })
     .join(', ');
   const tipoLabel = TIPO_LABELS[pedido.tipo] || pedido.tipo;
 
+  const esDidi = pedido.origen === 'didi';
   let badgeEstado;
   if (pedido.cancelado) {
     badgeEstado = `<span class="badge badge-pendiente" style="background:#eee;color:#888">❌ Cancelado</span>`;
+  } else if (esDidi) {
+    badgeEstado = `<span class="badge" style="background:#ede7f6;color:#5a2ca0">🛵 Solo inventario</span>`;
   } else if (pedido.pagado) {
     badgeEstado = `<span class="badge badge-pagado">✅ ${METODO_LABELS[pedido.metodo_pago] || pedido.metodo_pago}</span>`;
   } else {
     badgeEstado = `<span class="badge badge-pendiente">⏳ Por cobrar</span>`;
   }
-  const badgeCocina = !pedido.cancelado
+  const badgeCocina = !pedido.cancelado && !esDidi
     ? `<span class="badge" style="background:#eee;color:#555">${ESTADO_COCINA_LABEL[pedido.estado] || pedido.estado}</span>`
     : '';
   const badgeRepartidor =
@@ -207,7 +214,7 @@ function renderPedidoRow(pedido) {
   return `
     <div class="pedido-row" data-id="${pedido.id}">
       <div class="pedido-row-top">
-        <span class="pedido-row-id">#${pedido.numero_dia ?? pedido.id} <span class="badge badge-${pedido.tipo}">${tipoLabel}</span>${pedido.origen === 'web' ? ' <span class="badge" style="background:#e0f2ff;color:#0056b3">🌐 En línea</span>' : ''}</span>
+        <span class="pedido-row-id">#${pedido.numero_dia ?? pedido.id} ${esDidi ? '<span class="badge" style="background:#ede7f6;color:#5a2ca0">🛵 DiDi</span>' : `<span class="badge badge-${pedido.tipo}">${tipoLabel}</span>`}${pedido.origen === 'web' ? ' <span class="badge" style="background:#e0f2ff;color:#0056b3">🌐 En línea</span>' : ''}</span>
         <span class="pedido-row-hora">${fechaCorta} · ${hora}</span>
       </div>
       <div class="pedido-row-cliente">
@@ -221,7 +228,7 @@ function renderPedidoRow(pedido) {
       }
       <div class="pedido-row-items">${itemsTexto}</div>
       <div class="pedido-row-bottom">
-        <span class="pedido-row-total">$${Number(pedido.total).toFixed(2)}</span>
+        <span class="pedido-row-total">${esDidi ? 'Sin monto' : '$' + Number(pedido.total).toFixed(2)}</span>
         <span>${badgeRepartidor} ${badgeCocina} ${badgeEstado}</span>
       </div>
     </div>`;
@@ -270,7 +277,7 @@ document.getElementById('btn-nuevo-pedido').addEventListener('click', (e) => {
 document.addEventListener('click', () => {
   document.getElementById('nuevo-pedido-menu').style.display = 'none';
 });
-document.querySelectorAll('#nuevo-pedido-menu button').forEach((btn) => {
+document.querySelectorAll('#nuevo-pedido-menu button[data-tipo]').forEach((btn) => {
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     document.getElementById('nuevo-pedido-menu').style.display = 'none';
@@ -304,7 +311,7 @@ async function abrirOverlayEditar(pedidoId) {
   let sufijoTitulo = '';
   if (pedido.finalizado) sufijoTitulo = ' — finalizado';
   else if (pedido.pagado) sufijoTitulo = ' — cobrado';
-  document.getElementById('overlay-titulo').textContent = `Pedido #${pedido.numero_dia ?? pedido.id}${sufijoTitulo}`;
+  document.getElementById('overlay-titulo').textContent = pedido.origen === 'didi' ? `🛵 Pedido DiDi #${pedido.numero_dia ?? pedido.id} (solo inventario)` : `Pedido #${pedido.numero_dia ?? pedido.id}${sufijoTitulo}`;
   document.querySelector('.overlay-body').classList.remove('vista-productos');
   prepararCamposCliente();
   document.getElementById('ticket-cliente-nombre').value = pedido.cliente_nombre || '';
@@ -334,7 +341,7 @@ async function abrirOverlayEditar(pedidoId) {
 
   bannerCancelado.style.display = pedido.cancelado ? 'block' : 'none';
   accionesExtra.style.display = pedido.cancelado ? 'none' : 'flex';
-  btnCambiarMetodo.style.display = pedido.pagado && !pedido.cancelado ? 'block' : 'none';
+  btnCambiarMetodo.style.display = pedido.pagado && !pedido.cancelado && pedido.origen !== 'didi' ? 'block' : 'none';
   btnCancelarCompleto.style.display = pedido.cancelado ? 'none' : 'block';
   btnWhatsapp.style.display = pedido.cliente_telefono && !pedido.cancelado ? 'block' : 'none';
   btnWhatsapp.onclick = () => abrirWhatsAppCliente(pedido);
@@ -1350,7 +1357,7 @@ function renderCuadreCaja() {
       </tbody>
     </table>
     <div style="display:flex;align-items:center;gap:8px;margin:0 12px 16px;padding:12px;background:#f3ecfa;border-radius:10px">
-      <span style="font-size:13px;color:#5a2ca0;font-weight:600;flex:1">🛵 Ventas DiDi de hoy (captúralo tú, no está integrado todavía)</span>
+      <span style="font-size:13px;color:#5a2ca0;font-weight:600;flex:1">🛵 Ventas DiDi de hoy (captúralo tú, no está integrado todavía)${corteActual.pedidosDidi ? `<br><span style="font-weight:400;font-size:12px">Hoy registraste ${corteActual.pedidosDidi} pedido${corteActual.pedidosDidi === 1 ? '' : 's'} de DiDi en el POS (${corteActual.productosDidi} producto${corteActual.productosDidi === 1 ? '' : 's'}). Compáralos con los de la app de DiDi.</span>` : ''}</span>
       <input type="text" inputmode="decimal" id="input-ventas-didi" placeholder="0.00" value="${ventasDidiPrevio}" style="width:100px;padding:8px;border-radius:6px;border:1px solid #ddd;text-align:right" />
     </div>
     <button id="btn-cerrar-corte-accion" class="btn-nuevo-pedido" style="margin:0 12px 16px;width:calc(100% - 24px);background:#1a7d3a">${editandoCorteExistente ? 'Guardar corrección' : 'Cerrar corte'}</button>
@@ -1888,6 +1895,186 @@ async function buscarClientePorTelefono() {
   }
   document.getElementById('ticket-cliente-encontrado').style.display = 'block';
 }
+
+// ==================== PEDIDO DIDI (solo inventario) ====================
+// DiDi no pudo conectarse al POS, así que sus pedidos se capturan a mano aquí, solo para descontar inventario:
+// no llevan monto, no se cobran, no pasan por cocina y no entran al corte ni a los informes de ventas
+// (la venta de DiDi se sigue capturando en el corte, porque ahí hay comisiones e impuestos).
+let didiState = null;
+
+function avisoPos(mensaje, error) {
+  const el = document.createElement('div');
+  el.textContent = mensaje;
+  el.style.cssText = `position:fixed;left:50%;bottom:24px;transform:translateX(-50%);max-width:90vw;padding:12px 18px;border-radius:22px;z-index:600;font-size:14px;font-weight:600;color:#fff;box-shadow:0 4px 14px rgba(0,0,0,.3);background:${error ? '#b8232f' : '#2a231c'}`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), error ? 4500 : 3000);
+}
+
+function abrirDidi() {
+  didiState = { carrito: [], categoria: state.categorias[0]?.id ?? 'todos', enviando: false };
+  document.getElementById('didi-referencia').value = '';
+  document.getElementById('didi-buscar').value = '';
+  document.getElementById('didi-error').textContent = '';
+  document.getElementById('overlay-didi').classList.add('abierto');
+  renderDidiCats();
+  renderDidiProductos();
+  renderDidiPie();
+}
+
+function cerrarDidi(forzar) {
+  if (!forzar && didiState && didiState.carrito.length && !confirm('¿Descartar este pedido DiDi sin registrarlo?')) return;
+  didiState = null;
+  document.getElementById('overlay-didi').classList.remove('abierto');
+}
+
+function renderDidiCats() {
+  const cats = [{ id: 'todos', nombre: 'Todos' }, ...state.categorias];
+  document.getElementById('didi-cats').innerHTML = cats
+    .map((c) => `<button class="didi-cat ${didiState.categoria === c.id ? 'activo' : ''}" data-cat="${c.id}">${escapeHtml(c.nombre)}</button>`)
+    .join('');
+  document.querySelectorAll('#didi-cats .didi-cat').forEach((b) =>
+    b.addEventListener('click', () => {
+      didiState.categoria = b.dataset.cat === 'todos' ? 'todos' : Number(b.dataset.cat);
+      renderDidiCats();
+      renderDidiProductos();
+    })
+  );
+}
+
+function renderDidiProductos() {
+  const q = document.getElementById('didi-buscar').value.trim().toLowerCase();
+  const lista = q
+    ? state.productos.filter((p) => p.nombre.toLowerCase().includes(q))
+    : didiState.categoria === 'todos'
+    ? state.productos
+    : state.productos.filter((p) => p.categoria_id === didiState.categoria);
+  const catNombre = {};
+  state.categorias.forEach((c) => (catNombre[c.id] = c.nombre));
+  const cantidadDe = (id) => didiState.carrito.filter((l) => l.producto_id === id).reduce((s, l) => s + l.cantidad, 0);
+
+  const cont = document.getElementById('didi-grid');
+  cont.innerHTML =
+    lista
+      .map((p) => {
+        const n = cantidadDe(p.id);
+        return `<div class="prod-tile ${n ? 'con-cantidad' : ''}" data-id="${p.id}">${n ? `<span class="didi-badge">${n}</span>` : ''}${visualProductoTile(p, catNombre[p.categoria_id])}<div class="nombre">${escapeHtml(p.nombre)}</div></div>`;
+      })
+      .join('') || '<p class="didi-vacio" style="grid-column:1/-1">No hay productos con ese filtro.</p>';
+  cont.querySelectorAll('.prod-tile').forEach((el) => el.addEventListener('click', () => clickProductoDidi(Number(el.dataset.id))));
+}
+
+// Un toque suma 1. Si el producto tiene variantes o extras (ej. maíz/harina, pieza/orden), pregunta cuál,
+// porque de eso depende cuánto inventario se descuenta.
+function clickProductoDidi(productoId) {
+  const p = state.productos.find((x) => x.id === productoId);
+  if (!p) return;
+  const grupos = p.grupos_modificadores || [];
+  if (grupos.length) abrirModalModificadores(p, grupos, agregarADidi);
+  else agregarADidi({ producto_id: p.id, nombre: p.nombre, cantidad: 1, opciones_seleccionadas: [] });
+}
+
+function agregarADidi(item) {
+  if (!didiState) return;
+  const opciones = item.opciones_seleccionadas || [];
+  const clave = item.producto_id + '|' + JSON.stringify(opciones.map((o) => o.id));
+  const existente = didiState.carrito.find((l) => l._clave === clave);
+  if (existente) existente.cantidad += item.cantidad;
+  else didiState.carrito.push({ producto_id: item.producto_id, nombre: item.nombre, opciones_seleccionadas: opciones, cantidad: item.cantidad, _clave: clave });
+  document.getElementById('modal-container').innerHTML = '';
+  document.getElementById('didi-error').textContent = '';
+  renderDidiProductos();
+  renderDidiPie();
+}
+
+function cambiarCantidadDidi(clave, delta) {
+  const l = didiState.carrito.find((x) => x._clave === clave);
+  if (!l) return;
+  l.cantidad = Math.min(200, l.cantidad + delta);
+  if (l.cantidad <= 0) didiState.carrito = didiState.carrito.filter((x) => x._clave !== clave);
+  renderDidiProductos();
+  renderDidiPie();
+}
+
+function renderDidiPie() {
+  const total = didiState.carrito.reduce((s, l) => s + l.cantidad, 0);
+  document.getElementById('didi-lineas').innerHTML = didiState.carrito.length
+    ? didiState.carrito
+        .map((l) => {
+          const detalle = l.opciones_seleccionadas.map((o) => o.nombre).join(', ');
+          return `<div class="didi-linea"><div class="txt">${escapeHtml(l.nombre)}${detalle ? `<small>${escapeHtml(detalle)}</small>` : ''}</div>
+            <button data-clave="${escapeHtml(l._clave)}" data-delta="-1">−</button><span class="cant">${l.cantidad}</span><button data-clave="${escapeHtml(l._clave)}" data-delta="1">+</button></div>`;
+        })
+        .join('')
+    : '<div class="didi-vacio">Toca los productos que pidió el cliente de DiDi</div>';
+  document.querySelectorAll('#didi-lineas button[data-clave]').forEach((b) =>
+    b.addEventListener('click', () => cambiarCantidadDidi(b.dataset.clave, Number(b.dataset.delta)))
+  );
+  const btn = document.getElementById('btn-didi-registrar');
+  btn.disabled = !total || didiState.enviando;
+  btn.textContent = didiState.enviando ? 'Registrando…' : total ? `Registrar pedido DiDi (${total} producto${total === 1 ? '' : 's'})` : 'Registrar pedido DiDi';
+}
+
+async function registrarDidi() {
+  if (!didiState || didiState.enviando || !didiState.carrito.length) return;
+  const errEl = document.getElementById('didi-error');
+  errEl.textContent = '';
+  const ref = document.getElementById('didi-referencia').value.trim().replace(/^#/, '').slice(0, 20);
+  const nombre = ref ? `DiDi #${ref}` : 'DiDi';
+  const sucursal_id = Number(document.getElementById('sucursal-select').value);
+
+  // Evita registrar dos veces el mismo pedido (se descontaría el inventario dos veces)
+  if (ref) {
+    try {
+      const hoy = fechaNegocioActual();
+      const lista = await fetch(`/api/pedidos?sucursal_id=${sucursal_id}&fecha_desde=${hoy}&fecha_hasta=${hoy}`).then((r) => r.json());
+      if (lista.some((p) => p.origen === 'didi' && !p.cancelado && p.cliente_nombre === nombre)) {
+        if (!confirm(`Ya registraste el pedido ${nombre} hoy. ¿Registrarlo otra vez? Se descontaría el inventario de nuevo.`)) return;
+      }
+    } catch (e) {
+      // si no se pudo revisar, se deja registrar igual
+    }
+  }
+
+  didiState.enviando = true;
+  renderDidiPie();
+  let resp;
+  try {
+    resp = await fetch('/api/pedidos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        sucursal_id, origen: 'didi', tipo: 'para_llevar', cliente_nombre: nombre,
+        items: didiState.carrito.map((l) => ({ producto_id: l.producto_id, cantidad: l.cantidad, precio_unitario: 0, opciones_seleccionadas: l.opciones_seleccionadas })),
+      }),
+    });
+  } catch (e) {
+    didiState.enviando = false;
+    renderDidiPie();
+    errEl.textContent = '❌ No se pudo conectar. Revisa tu internet: el pedido NO se registró.';
+    return;
+  }
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    didiState.enviando = false;
+    renderDidiPie();
+    errEl.textContent = '❌ ' + (err.error || 'No se pudo registrar el pedido');
+    return;
+  }
+  const pedido = await resp.json();
+  cerrarDidi(true);
+  avisoPos(`✅ ${nombre} registrado (#${pedido.numero_dia ?? pedido.id}). Inventario descontado.`);
+  cargarPedidosYContar();
+  if (document.getElementById('overlay-historial').classList.contains('abierto')) cargarHistorial();
+}
+
+document.querySelector('#nuevo-pedido-menu button[data-didi]').addEventListener('click', (e) => {
+  e.stopPropagation();
+  document.getElementById('nuevo-pedido-menu').style.display = 'none';
+  abrirDidi();
+});
+document.getElementById('btn-didi-cerrar').addEventListener('click', () => cerrarDidi(false));
+document.getElementById('btn-didi-registrar').addEventListener('click', registrarDidi);
+document.getElementById('didi-buscar').addEventListener('input', () => didiState && renderDidiProductos());
 
 // ==================== NAVEGACIÓN A COCINA Y ADMINISTRACIÓN ====================
 
