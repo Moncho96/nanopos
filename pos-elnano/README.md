@@ -764,6 +764,505 @@ Respeta el selector de sucursal de arriba (si eliges una sucursal, todo se filtr
 empleado tiene sucursal asignada, ya viene fijo ahí). No requiere ninguna migración de base de
 datos — solo sube `server.js`, `public/pos/index.html`, `public/pos/app.js` a GitHub.
 
+## 36. Cambiar el tipo de un pedido ya creado
+
+Dentro de cualquier pedido editable, aparece el botón **"🔄 Cambiar tipo"** — para cuando un
+cliente dijo domicilio y al final pasa por él, o al revés. Si cambias a domicilio, te pide la
+colonia para calcular el costo de envío solo (igual que al crear un pedido nuevo); si cambias a
+mesa o para llevar, el envío se quita solo y el total se recalcula.
+
+No requiere ninguna migración de base de datos — solo sube `server.js`, `public/pos/index.html`,
+`public/pos/app.js` a GitHub.
+
+## 37. Etiquetas de comentarios por producto
+
+Al agregar cualquier producto a un pedido, ahora sale una sección de **"Comentarios"** con
+chips rápidos ("Sin queso", "Sin cebolla", "Poco aceite", etc.) para tocar sin teclear, más un
+campo de texto libre por si sale algo distinto. El comentario se ve junto al producto en el
+ticket del POS y, lo más importante, **destacado en amarillo en la pantalla de Cocina** para que
+el cocinero lo note de inmediato.
+
+**Las etiquetas se configuran por categoría** (no producto por producto, para no repetir la
+misma lista veinte veces) — en Menú → Productos, cada categoría tiene un botón 🏷️ para
+agregar/quitar sus etiquetas. Ya te dejé precargadas algunas de ejemplo con base en lo que
+mencionaste (tacos: sin cebolla/sin aceite/poco aceite; volcanes-piratas y hamburguesas: sin
+queso/sin cebolla) — edítalas o bórralas como quieras.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-etiquetas.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/app.js`, `public/kds/app.js`.
+
+## 38. Control de entregas a domicilio y repartidores
+
+Dentro de cualquier pedido a domicilio (que no esté finalizado), aparece una sección
+**"🛵 Control de envío"**:
+
+1. **Pon con cuánto paga el cliente** (ej. $500 para un pedido de $300) — calcula el cambio
+   solo ($200), para que el repartidor sepa cuánto llevar.
+2. **"📤 Enviar a grupo de WhatsApp"** — arma el mensaje completo (cliente, dirección,
+   productos con sus comentarios, total, y cuánto cambio dar) y abre WhatsApp directo en la
+   pantalla de elegir a quién mandárselo — tú solo tocas tu grupo de repartidores de la lista,
+   ya no hay que escribir ni copiar nada.
+3. **Elige el repartidor** que se lo lleva (de un catálogo que administras en menú ☰ → "🛵
+   Repartidores") y dale **"Asignar"** — queda registrado quién se llevó cada pedido, visible
+   como etiqueta en la lista principal.
+4. Cuando el repartidor regresa con el dinero, **"✅ Liquidar entrega"** — marca el pedido como
+   liquidado y, si quieres, registra automáticamente el gasto del pago de su envío (para que
+   ya quede reflejado en Gastos y en el corte de caja).
+
+Mesero y cajero pueden asignar repartidor y mandar el mensaje; liquidar la entrega y administrar
+el catálogo de repartidores es nivel cajero/encargado (maneja dinero en efectivo).
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-repartidores.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/index.html`, `public/pos/app.js`.
+
+## 39. Profit First integrado
+
+Nuevo panel **"💰 Profit First"** (menú ☰, solo encargado) con las 7 categorías que pediste:
+Opex, Nómina, Impuestos, Sueldo dueño, Renta, Aguinaldo y Utilidad — cada una con su
+porcentaje (editable) y su saldo acumulado.
+
+**Cómo se reparte solo:** cada vez que cierras un corte de caja (de cualquiera de las dos
+sucursales), el total contado de ese corte se reparte automáticamente entre estas categorías
+según su porcentaje — sin que tengas que hacer nada. Si corriges un corte ya cerrado, el reparto
+viejo se reemplaza por el nuevo, no se duplica.
+
+**Registrar gastos por categoría:** cada tarjeta trae su propio mini-formulario (monto +
+descripción) para registrar un gasto contra ese sobre específico — por ejemplo, pagar la renta
+del mes se resta del saldo de "Renta", la nómina de la quincena del saldo de "Nómina", etc.
+
+**Se conecta solo con el Reparto de utilidades** que ya tenías: cada vez que registras un
+reparto a un socio, se descuenta automático del saldo de "Utilidad" — así ese sobre siempre
+refleja lo que de verdad queda disponible para repartir.
+
+Los porcentajes de ejemplo que te dejé cargados (Opex 40%, Nómina 25%, Impuestos 10%, Sueldo
+dueño 10%, Renta 8%, Aguinaldo 2%, Utilidad 5%) son solo un punto de partida — ajústalos a los
+que ya manejas tú.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-profit-first.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/index.html`, `public/pos/app.js`.
+
+## 40. Importar respaldo del sistema anterior de Profit First
+
+Dentro del panel "💰 Profit First", botón **"📥 Importar respaldo del sistema anterior"** — sube
+tu archivo JSON de caja chica (el que traía metas diarias/semanales/mensuales en vez de
+porcentajes) y lo traduce solo a movimientos en las categorías actuales:
+
+| Tu sistema anterior | Categoría actual |
+|---|---|
+| Nómina | Nómina |
+| Impuestos | Impuestos |
+| Sueldo | Sueldo dueño |
+| Fijos | Renta |
+| Aguinaldo | Aguinaldo |
+| Utilidad | Utilidad |
+| *(no existía)* | Opex — se queda sin historial |
+
+Convierte las metas (`nominaWeekly`, `taxDaily`, etc.) en un ingreso diario prorateado por cada
+día que tenías registrado, resta lo que ya se había pagado de cada uno (`nominaPagada`,
+`impPagado`, etc.), y trae los saldos iniciales (`initNomina`, `initImpuestos`, etc.) como punto
+de partida. Si tu respaldo traía un reparto grande de utilidad, también lo mete al historial de
+"Reparto de utilidades" — como no se sabe cómo se dividió entre tú y tu papá en ese momento,
+queda marcado como "Importado (revisar división)" para que lo corrijas si hace falta.
+
+Tiene un seguro contra importar dos veces por accidente — si ya detecta datos importados antes,
+no deja repetirlo sin avisarte primero.
+
+No requiere ninguna migración nueva de base de datos (usa las tablas que ya creamos para Profit
+First) — solo sube `server.js`, `public/pos/index.html`, `public/pos/app.js` a GitHub.
+
+## 41. Ventas de DiDi en el corte (manual, mientras no esté integrado)
+
+En "Cuadre de caja" (dentro del Corte), aparece un campo morado **"🛵 Ventas DiDi de hoy"**
+para capturar a mano lo que vendiste por esa plataforma — ya que como no está integrada al
+sistema todavía, no hay forma de que se calcule solo. No afecta el cuadre de
+efectivo/tarjeta/transferencia (ese dinero nunca pasa por tu caja física), pero:
+
+- Queda guardado en el historial de cada corte, para que no se te pierda el dato.
+- **Si se incluye en el reparto de Profit First** — el día que cierras el corte, tus sobres
+  también reciben su porcentaje sobre esta venta de DiDi, no solo sobre lo contado en caja.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-corte-didi.sql`.
+3. Sube a GitHub: `server.js`, `public/pos/app.js`.
+
+## 42. Separación en dos páginas: POS (operativo) + Administración (tipo ERP)
+
+Con todo lo que se le fue agregando, el POS se había saturado de paneles que casi nunca se usan
+durante el turno normal. Ahora está dividido en dos páginas independientes:
+
+**`/pos`** — solo lo operativo del día a día: tomar/editar pedidos, cobrar, cancelar/finalizar,
+control de envío a domicilio, WhatsApp/reseñas por pedido, canjear puntos de lealtad, Historial
+de pedidos y Corte de caja. El menú lateral quedó mucho más corto.
+
+**`/admin`** — todo lo administrativo/estratégico, como un mini-ERP aparte: Menú (productos,
+insumos, recetas, variantes, etiquetas), Conteo de inventario, Registrar compra, Planeación de
+compras, Informes, Profit First, Reparto de utilidades, Lealtad (crear recompensas), Reseñas
+(config. de Google), Catálogo de clientes, Repartidores, Empleados, Envíos por colonia,
+Importar historial e Importar recetas. Se abre desde un tablero de mosaicos, no un menú lateral
+largo.
+
+Un botón "⚙️ Administración" en el menú del POS lleva a `/admin`, y un botón "🏪 Ir al POS" en el
+header de Admin regresa — igual que ya existía entre POS y Cocina. Ambas páginas comparten la
+misma sesión (no hay que volver a iniciar sesión al cambiar), el mismo modo oscuro, y el mismo
+sistema de permisos por puesto: mesero no puede entrar a `/admin` en absoluto (ni por link
+directo — el servidor lo bloquea), cajero ve una parte (Informes, Clientes, Repartidores), y
+encargado ve todo.
+
+**No requiere ninguna migración de base de datos** — es puramente una reorganización de
+archivos. Sube a GitHub:
+- `server.js`
+- `public/pos/index.html` y `public/pos/app.js` (reemplaza los que ya tenías)
+- La carpeta nueva **`public/admin/`** completa (index.html, app.js, manifest.json, sw.js,
+  icon-192.png, icon-512.png)
+
+Como es un cambio grande (dividir un archivo de más de 4,000 líneas en dos), pruébalo con calma
+recorriendo cada sección del menú de Administración antes de un turno con mucha gente — si algo
+no carga o da un error, dime exactamente en qué pantalla pasó y lo reviso de inmediato.
+
+## 43. Menú independiente por sucursal
+
+Categorías y productos ya no se comparten entre Santa María y Mitras Poniente — cada sucursal
+tiene su propio menú completo (productos, precios, categorías, recetas, variantes y etiquetas),
+editable de forma totalmente independiente desde Admin → Menú, respetando la sucursal que
+tengas elegida arriba.
+
+**Ganancia y gastos por sucursal ya los tenías** — el panel de Informes y el Corte de caja ya
+filtraban por sucursal desde antes; esto no cambió, solo se aclara aquí porque lo mencionaste.
+
+**Para no capturar el menú dos veces**, en Admin → Menú hay un cuadro amarillo con "Copiar
+menú" — eliges sucursal de origen y destino, y copia categorías, productos, recetas, variantes
+y etiquetas completas de una hacia la otra (no borra nada de la sucursal destino, solo agrega).
+Úsalo una sola vez al principio como punto de partida; de ahí en adelante edita cada sucursal
+por separado según lo que realmente vendan distinto.
+
+**Importante sobre costos de insumos:** el catálogo de insumos (nombre, costo unitario) sigue
+siendo compartido entre ambas sucursales — solo el **stock** ya era independiente por sucursal
+desde antes. Si tus insumos de verdad cuestan distinto entre una sucursal y otra (proveedores
+diferentes, por ejemplo), avísame y separamos eso también — no lo toqué en este cambio para no
+hacerlo aún más grande.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-menu-por-sucursal.sql` — esto asigna todo tu
+   menú actual a la primera sucursal (normalmente Santa María). Mitras Poniente arrancará sin
+   menú hasta que uses "Copiar menú" o captures el suyo desde cero.
+3. Sube a GitHub: `server.js`, `public/pos/app.js`, `public/admin/index.html`,
+   `public/admin/app.js`, `public/pedir/app.js`.
+4. Entra a Admin → Menú, revisa que tu sucursal actual tenga su menú completo, y usa "Copiar
+   menú" hacia la otra sucursal para no volver a capturar todo desde cero.
+
+## 44. Borrar productos del menú (definitivo, no solo ocultar)
+
+En Admin → Menú → Productos, cada fila ahora trae un botón 🗑️ para **borrar de verdad** el
+producto — distinto del 👁️/🚫 que ya existía (ese solo lo oculta, conservando su historial).
+
+Tiene un seguro automático: si el producto **ya se usó en algún pedido**, el borrado falla solo
+(la base de datos lo bloquea a propósito) y te avisa que uses el botón de ocultar en su lugar,
+para no perder ese historial. Solo se puede borrar de verdad un producto que nunca se ha
+vendido — por ejemplo uno que capturaste mal o de prueba.
+
+No requiere ninguna migración de base de datos — solo sube `server.js` y `public/admin/app.js`
+a GitHub.
+
+## 45. Profit First con el estilo de "ticket de caja chica"
+
+El panel de Profit First ahora tiene la misma paleta y look de "ticket de papel" de tu sistema
+anterior (fondo color papel, bordes punteados, tipografía monoespaciada, y cada categoría con su
+color: Opex en azul peltre, Nómina en achiote, Impuestos en chile, Utilidad en aguacate, Sueldo
+dueño en peltre oscuro, Renta en masa, Aguinaldo en vino) — incluyendo el borde zigzag de recibo
+entre secciones. Toda la funcionalidad real (editar porcentajes, registrar gastos/ingresos,
+reparto automático al cerrar corte, importar respaldo) se quedó igual, solo cambió el vestido.
+También respeta el modo oscuro.
+
+No requiere ninguna migración de base de datos — solo sube `public/admin/index.html` y
+`public/admin/app.js` a GitHub.
+
+## 46. Profit First: interfaz más limpia, y límites opcionales por categoría
+
+**Tarjetas más simples:** ya no se ven 3 campos y botones siempre abiertos — cada categoría
+muestra solo su saldo y, si quieres registrar algo, tocas "+ Movimiento" para que aparezca el
+formulario (se oculta de nuevo solo). El porcentaje y el nuevo límite se configuran aparte,
+detrás del botón **⚙️** de cada tarjeta, para no saturar la vista principal.
+
+**Límites (topes) opcionales:** en el engranaje de cada categoría puedes ponerle un tope — por
+ejemplo, que "Aguinaldo" deje de recibir dinero en automático al llegar a $25,000. Si lo dejas
+vacío, la categoría sigue siendo libre y suma sin límite, como hasta ahora. Cuando tiene tope,
+se ve una barrita de progreso con el color de esa categoría.
+
+El reparto automático al cerrar un corte ya respeta esto: si una categoría está a punto de
+llegar a su tope, solo le mete lo que le falta para llegarle justo, no de más.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-profit-first-limite.sql`.
+3. Sube a GitHub: `server.js`, `public/admin/app.js`.
+
+## 47. Rediseño de `/pedir`: tipo de servicio al final, y detecta clientes con puntos
+
+**El flujo cambió de orden**, para que sea más intuitivo:
+
+1. El cliente navega el menú y arma su carrito (sin elegir tipo de servicio todavía).
+2. Al tocar "Ver carrito", primero pone su **teléfono y nombre** — en cuanto el teléfono tiene
+   10 dígitos, el sistema busca solo si ya es cliente conocido. Si lo es, le completa el nombre
+   y, si tiene puntos de lealtad, le aparece un cuadro morado con sus puntos y las recompensas
+   que ya puede canjear — las elige tocándolas, y el descuento se aplica directo al total.
+3. Hasta aquí elige **"Para llevar" o "A domicilio"** — ya con el pedido armado, que es cuando
+   de verdad tiene sentido decidirlo. Si es domicilio, ahí mismo le pide colonia y dirección.
+4. Confirma, con el total ya con envío y descuento de lealtad incluidos si aplican.
+
+Esto resuelve justo el problema que mencionaste: antes el cliente elegía "para llevar" muy al
+principio, sin haber terminado de decidir su pedido, y terminaba pidiendo domicilio por error.
+
+No requiere ninguna migración de base de datos — solo sube `server.js`, `public/pedir/index.html`
+y `public/pedir/app.js` a GitHub.
+
+## 48. Aviso sonoro de pedido nuevo en el POS (con "Aceptar")
+
+Corrige que el aviso de pedido nuevo casi nunca sonaba de verdad — el motivo era que los
+navegadores bloquean el audio hasta que el usuario toca algo en la pantalla, y el código viejo
+creaba un `AudioContext` nuevo cada vez (siempre bloqueado). Ahora se desbloquea una sola vez,
+en la primera interacción con la página, y de ahí en adelante sí suena.
+
+**Cómo funciona:** al llegar un pedido nuevo (de `/pedir` o capturado en otra caja), suena una
+campanita de dos tonos (no un beep seco) y aparece un banner verde arriba "🔔 Nuevo pedido" con
+botón **"Aceptar"**. Mientras nadie lo acepte, la campanita se repite cada 4 segundos — ni tan
+seguido que estrese, ni tan espaciado que se pase desapercibido. En cuanto tocas "Aceptar", para
+de sonar y el banner desaparece. Si llegan varios pedidos antes de aceptar, el banner cuenta
+cuántos van ("🔔 3 pedidos nuevos") y "Aceptar" los reconoce todos de un jalón.
+
+No requiere ninguna migración de base de datos — solo sube `public/pos/index.html` y
+`public/pos/app.js` a GitHub.
+
+## 49. Ranking de repartidores (desempeño)
+
+Dentro de Admin → Repartidores, pestaña **"🏆 Desempeño"**: elige un rango de fechas (con los
+mismos accesos rápidos "Hoy"/"Esta semana"/"Este mes" que Informes) y ve:
+
+- Tarjetas con cada repartidor ordenado de mayor a menor número de pedidos entregados en ese
+  rango (con medallas 🥇🥈🥉 para los primeros 3), más lo que generaron en ventas.
+- Una tabla de **pedidos por día**, repartidor por fila y cada día del rango como columna, para
+  ver el detalle completo y repartir premios con datos reales en la mano.
+
+Cuenta los pedidos a domicilio que cada repartidor tiene asignados (no cancelados) en el rango
+elegido, usando la fecha en que se le asignó el pedido.
+
+No requiere ninguna migración de base de datos — solo sube `server.js`, `public/admin/index.html`
+y `public/admin/app.js` a GitHub.
+
+## 50. Premios semanales para repartidores
+
+Dentro de Admin → Repartidores → 🏆 Desempeño, arriba de las tarjetas de ranking aparece
+**"🏆 Premio de este rango"** con el top 3 y el monto que le toca a cada quien, más un botón
+**"Marcar pagado"** — lo registra en el historial (no deja pagarlo dos veces para el mismo
+rango de fechas) y, si quieres, lo registra de una vez como gasto en el corte de esa sucursal.
+
+Los montos del premio (1er, 2do y 3er lugar) se configuran con el botón **"⚙️ Premios"** junto
+al buscador de fechas — vienen $300/$150/$100 de ejemplo, cámbialos a los que decidas usar.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → servicio de Postgres → pestaña **"Data"**.
+2. Copia y corre el contenido de `db/migracion-premios-repartidores.sql`.
+3. Sube a GitHub: `server.js`, `public/admin/index.html`, `public/admin/app.js`.
+
+## 51. Logo real y temporadas que cambian solas
+
+**Logo:** ya está integrado en todas las pantallas (POS, Cocina, Administración, Pedidos en
+línea, Login) y también como ícono de la app instalada en pantalla de inicio — reemplaza al
+placeholder genérico "EN" que se usó antes de que me pasaras el logo real.
+
+**Temporadas automáticas:** un script compartido (`temporada.js`) revisa la fecha de hoy y le
+agrega al header una franjita de color y un emoji de temporada — sutil, no estorba la operación
+del día a día. Cambia solo, sin que tengas que tocar nada:
+
+- **Octubre – 2 de noviembre:** Día de Muertos / Halloween 💀 (naranja y morado)
+- **Diciembre – 6 de enero:** Navidad 🎄 (verde, dorado, rojo)
+- **10-20 de septiembre:** Fiestas Patrias 🇲🇽 (verde, blanco, rojo)
+- **1-14 de febrero:** San Valentín 💘 (rosa)
+- **1-10 de mayo:** Día de las Madres 💐 (rosa/verde)
+- Resto del año: colores normales de la marca, sin decoración
+
+Si quieres agregar, quitar o ajustar fechas de alguna temporada, está todo en un solo lugar
+(`temporada.js`, la función `obtenerTemporadaActual`) — dime qué cambio quieres y lo ajusto.
+
+No requiere ninguna migración de base de datos — solo sube las carpetas `public/pos/`,
+`public/kds/`, `public/admin/`, `public/pedir/`, `public/resena/` y `public/login/` completas
+(cada una ya trae su logo, íconos nuevos y el script de temporada).
+
+## 52. Editar un corte ya cerrado (para corregir errores de captura)
+
+En Corte de caja, si consultas una fecha que ya se había cerrado, ahora aparece el botón
+**"✏️ Editar este corte (por si se capturó mal)"** — te regresa al formulario, ya prellenado
+con los montos que se habían capturado antes, para que los corrijas. Al guardar, reemplaza lo
+que había (no se duplica ni se suma), y puedes cancelar sin guardar si solo querías consultarlo.
+
+El backend ya soportaba esto desde que se construyó el corte (vuelve a cerrar la misma fecha sin
+problema) — lo que faltaba era la forma de llegar a ese formulario una vez que el corte ya
+estaba cerrado, que es justo lo que se agregó aquí.
+
+No requiere ninguna migración de base de datos — solo sube `public/pos/app.js` a GitHub.
+
+## 53. Gastos por caja de Profit First (fuera del corte)
+
+Nuevo mosaico **"💸 Gastos por caja"** en Administración (solo encargado, igual que Profit
+First). Ahí registras un gasto eligiendo la **caja** (Opex, Nómina, Impuestos, Sueldo dueño,
+Renta, Aguinaldo o Utilidad), el monto, la fecha, la descripción y con qué se pagó.
+
+- **No toca el corte de caja:** vive aparte, no afecta el cuadre de efectivo/tarjeta/transferencia.
+- **Descuenta de la caja elegida** en Profit First automáticamente, y en el selector ves el saldo
+  actual de cada una antes de registrar.
+- **Queda por sucursal** — se registra en la sucursal que tengas elegida arriba, y la lista
+  (con filtros Hoy / Esta semana / Este mes) muestra total del periodo y desglose por caja.
+- **Borrar un gasto le regresa el dinero a su caja** — gasto y descuento van siempre sincronizados.
+- **Informes lo cuenta:** el "Resultado del periodo" ahora resta también estos gastos
+  (línea nueva "Gastos por caja (Profit First)"). Ojo: si registras el mismo gasto aquí y también
+  en el corte, se contaría dos veces — elige uno de los dos lugares para cada gasto.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → Postgres → **Console** (corre `psql` primero) o **Data**, y pega el contenido de
+   `db/migracion-gastos-profit-first.sql`.
+2. Sube a GitHub: `server.js`, `public/admin/index.html`, `public/admin/app.js`.
+
+## 54. Excedente de cajas topadas (ya no se pierde)
+
+Antes, cuando una caja con tope ya estaba llena, su parte del corte dejaba de registrarse en
+Profit First y desaparecía. Ahora **se va a otra caja**: por defecto **Utilidad**, y cada caja
+puede tener su propio destino desde el engranaje ⚙️ ("Cuando llegue al tope, el excedente se va a").
+
+- Si a la caja le faltan $50 para su tope y le tocaban $200, recibe $50 y los otros $150 pasan
+  a su destino (el movimiento queda en el historial como "Excedente de X (tope alcanzado)").
+- Si el destino también está lleno, el excedente sigue al destino de ese destino. Si se acaba la
+  cadena, lo absorbe la última caja aunque rebase su tope — es preferible a perder el dinero.
+- La suma de los movimientos de un corte siempre cuadra con lo vendido ese día.
+- En la tarjeta de cada caja con tope se ve "excedente → Utilidad" (o el destino que elijas).
+- **Único caso sin destino:** si la propia caja Utilidad tiene tope y está llena, su parte no
+  tiene a dónde ir y queda sin asignar (se avisa en el log del servidor). Lo normal es dejar
+  Utilidad sin tope.
+
+Los cortes ya cerrados antes de este cambio no registraron ese excedente. Para recuperarlo,
+vuelve a abrir cada corte con "✏️ Editar" y guárdalo de nuevo: el reparto se recalcula.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → Postgres → pega y corre `db/migracion-profit-first-excedente.sql`.
+2. Sube a GitHub: `server.js`, `public/admin/app.js`.
+
+## 55. Corrección: "Cerrar sesión" y menú ☰
+
+Al separar el sistema en POS y Administración se quedaron dos botones sin conectar:
+**"🚪 Cerrar sesión" en el POS** (existía pero no hacía nada) y **el botón ☰ en Administración**
+(no abría el menú, donde vive su "Cerrar sesión" y el acceso al POS). Ambos ya funcionan.
+No requiere migración — solo sube `public/pos/app.js` y `public/admin/app.js`.
+
+## 56. Corrección: pedidos de otra sucursal apareciendo en Cocina
+
+**Síntoma:** a veces la pantalla de Cocina de una sucursal mostraba pedidos de la otra, y se
+quitaban al recargar. **Causa:** al cambiar de sucursal, el servidor metía a la pantalla en la
+nueva "sala" pero nunca la sacaba de la anterior, así que seguía recibiendo ambas. Corregido en
+tres capas:
+
+- **Servidor:** al unirse a una sucursal, sale primero de cualquier otra (probado con Socket.io
+  real: antes recibía [Santa María, Mitras], ahora solo Mitras).
+- **Cocina y POS:** ignoran cualquier pedido cuya sucursal no sea la que tienen en pantalla
+  (también evita que suene el aviso de "nuevo pedido" por uno de la otra sucursal).
+- **Cocina:** si se corta la conexión (tablet que se duerme, wifi), vuelve a unirse a su sala y
+  recarga el tablero al reconectar. Además recuerda la última sucursal elegida en ese dispositivo
+  (como el POS), en vez de arrancar siempre en la primera de la lista.
+
+No requiere migración — sube `server.js`, `public/kds/app.js` y `public/pos/app.js`.
+
+## 57. Dashboard comparativo de sucursales
+
+Nuevo mosaico **"📊 Dashboard"** en Administración (solo encargado). Compara **las dos sucursales
+juntas y por separado** y muestra cómo evolucionan:
+
+- **Tarjetas del combinado:** ventas totales, pedidos, ticket promedio y resultado estimado (con
+  margen), cada una con una flecha ▲▼ contra el **periodo anterior de la misma duración** (verde =
+  mejoró, rojo = empeoró; en gastos, cancelados y tiempo, subir es malo y se pinta rojo).
+- **Evolución en el tiempo:** gráfica de líneas con el combinado y cada sucursal, y un selector de
+  métrica (Ventas · Pedidos · Ticket · Gastos · Resultado). Se agrupa por día, semana (lunes a
+  domingo) o mes — automático según el rango, o lo eliges tú.
+- **Tabla comparativa** (Combinado | cada sucursal), con su cambio vs. el periodo anterior: ventas
+  (mostrador/web y DiDi por separado), pedidos, ticket, % a domicilio, % en línea, clientes
+  distintos, gastos, resultado, margen, % cancelados, tiempo hasta estar listo, reseña promedio y
+  descuadre en cortes.
+- **Ventas promedio por día de la semana** por sucursal, con el mejor y el peor día (útil para
+  atacar la diferencia entre entre-semana y fin de semana).
+- Accesos rápidos: Este mes · 30 días · 90 días · 6 meses · Este año, o fechas a mano.
+
+**Cómo se calcula:** ventas totales = pedidos cobrados (ya con descuentos de lealtad y envío
+incluidos) + ventas de DiDi capturadas en el corte. Gastos = gastos del corte + "Gastos por caja".
+El resultado es **estimado**: no incluye el costo de insumos ni las compras de inventario
+registradas aparte. Si un encargado tiene una sola sucursal asignada, solo ve esa.
+
+**Correcciones que salieron de esta revisión:**
+- **Informes restaba dos veces los descuentos de lealtad** en el "Resultado del periodo" (el total
+  del pedido ya los trae restados). Corregido: ahora solo se muestra como nota informativa.
+- **Un error inesperado en una consulta ya no tumba el servidor completo** (antes, una fecha
+  imposible como 2026-13-45 hacía caer el proceso y con él POS y Cocina de ambas sucursales). Se
+  agregó una red de seguridad global y el dashboard valida las fechas y responde con un error claro.
+
+No requiere migración — solo sube `server.js`, `public/admin/index.html` y `public/admin/app.js`.
+
+## 59. Inventario avanzado (pestaña 📦 Inventario en Administración)
+
+Una sola pestaña con todo lo de inventario. **La base de todo es el historial de movimientos (kardex):**
+cada cambio de stock —venta, cancelación, compra, merma, producción, traspaso, ajuste, conteo— deja una
+fila con quién lo hizo, cuándo, cuánto y a qué costo. Por eso el stock siempre se puede explicar.
+
+| Pestaña | Qué hace | Quién la ve |
+|---|---|---|
+| 📊 Resumen | Valor del inventario, por surtir, compras y mermas del mes, producción, platillos sin receta, alertas | Encargado |
+| 📦 Stock | Existencias con estado (agotado/bajo), mínimo y máximo por sucursal, cobertura en días, costo y valor; merma, entrada, ajuste, historial por insumo, alta y edición de insumos | Todos (el cajero sin costos) |
+| 🚨 Alertas | Agotado, bajo mínimo, se acaba pronto, precio que subió +10%, merma alta, faltante en cierre, insumos sin costo, platillos sin receta, historial descuadrado | Todos (el cajero sin alertas con dinero) |
+| ⬇️ Entradas | **Compras con factor de conversión** (caja → kg), anulación de compras, **traspasos entre sucursales**, **pedido sugerido por proveedor con mensaje de WhatsApp**, y acceso a «compra con foto de ticket» y «plan de compras (IA)» | Encargado |
+| 🗑️ Mermas | Registro rápido con motivo + reporte (por motivo, por insumo, % sobre lo consumido) | Todos (reporte: encargado) |
+| 🍳 Producción | Producción diaria de insumos elaborados (carne adobada, salsas…): descuenta ingredientes, suma lo obtenido, calcula el costo real y el rendimiento; **sugerencia de qué producir hoy** según lo que se usa ese día de la semana | Todos (recetas: encargado) |
+| 🧾 Recetas y costos | Costo, margen y **food cost** de cada platillo y variante | Encargado |
+| 🚚 Proveedores | Catálogo, últimos precios y variación, comprado en 90 días, WhatsApp directo | Encargado |
+| ✅ Cierre de turno | Conteo de los insumos «críticos» (⭐), diferencias en vivo, ajuste opcional del sistema, historial | Todos |
+| 📜 Movimientos | El kardex completo con filtros por tipo, insumo y fechas | Todos (sin costos para el cajero) |
+
+**Cómo se calcula el costo:** cada compra se convierte a la unidad base y el costo del insumo pasa a ser un
+**promedio ponderado** entre lo que ya había (en todas las sucursales) y lo que entra. Lo mismo al producir
+un elaborado. Anular una compra devuelve el stock pero no revierte el costo promedio.
+
+**Mosaicos anteriores:** «Conteo de inventario», «Registrar compra» y «Planeación de compras» ya no aparecen en el
+tablero, pero siguen funcionando y se abren desde la pestaña Inventario. Todo lo que hacen ahora también deja
+historial. «Importar recetas» y el editor de recetas del menú siguen igual.
+
+**Importante:**
+- Para que el stock se mueva con historial hay que correr la migración (ver abajo). Si subes el código antes,
+  **las ventas no se rompen** (el stock se mueve igual, solo avisa en el log del servidor), pero la pestaña nueva
+  marcará error hasta migrar.
+- El historial arranca con el stock de hoy como «saldo inicial». Si alguien cambia el stock directo en la base
+  de datos (fuera del sistema), aparece la alerta «El stock no coincide con su historial».
+- `costo_unitario` ahora guarda 4 decimales (antes 2) para insumos de fracciones de centavo por gramo/pieza.
+- Se corrigió además el encabezado de Administración en celular: no cabía en una fila y dejaba fuera el botón ☰
+  (menú y cerrar sesión). Ahora pasa a dos filas.
+
+Para activar esto en tu base de datos ya desplegada:
+
+1. Railway → Postgres → corre `db/migracion-inventario-avanzado.sql` (es repetible: si la corres dos veces no pasa nada).
+2. Sube a GitHub: `server.js`, `inventario.js` (nuevo), `public/admin/index.html`, `public/admin/app.js`,
+   `public/admin/inventario.js` (nuevo).
+3. Entra a 📦 Inventario → Stock → ⚙️ de tus insumos principales: pon proveedor, unidad de compra y factor,
+   stock mínimo y marca ⭐ crítico los que quieras contar al cierre.
+
 ## Estructura del proyecto
 
 ```
