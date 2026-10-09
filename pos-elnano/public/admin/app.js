@@ -38,6 +38,17 @@ function fechaNegocioActual() {
   return `${y}-${m}-${d}`;
 }
 
+// Rango de un preset (hoy / semana / mes) calculado sobre el DÍA DE NEGOCIO, no sobre el calendario UTC:
+// de 6pm a medianoche (en Monterrey) la fecha UTC ya es la del día siguiente, y de 12am a 6am todavía
+// se está en el día de negocio anterior. La semana empieza en domingo.
+function rangoPresetFechas(preset) {
+  const hoy = new Date(fechaNegocioActual() + 'T12:00:00');
+  let desde = new Date(hoy);
+  if (preset === 'semana') desde.setDate(hoy.getDate() - hoy.getDay());
+  else if (preset === 'mes') desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  return { desde: fechaLocalISO(desde), hasta: fechaLocalISO(hoy) };
+}
+
 const state = {
   sucursales: [],
   categorias: [],
@@ -184,13 +195,8 @@ document.getElementById('btn-consultar-desempeno-rep').addEventListener('click',
 
 function aplicarPresetFechaRep(preset) {
   document.querySelectorAll('.chip-fecha-rep').forEach((b) => b.classList.toggle('activo', b.dataset.presetRep === preset));
-  const hoy = new Date();
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  let desde = new Date(hoy);
-  const hasta = fmt(hoy);
-  if (preset === 'semana') desde.setDate(hoy.getDate() - hoy.getDay());
-  else if (preset === 'mes') desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-  document.getElementById('rep-desempeno-desde').value = fmt(desde);
+  const { desde, hasta } = rangoPresetFechas(preset);
+  document.getElementById('rep-desempeno-desde').value = desde;
   document.getElementById('rep-desempeno-hasta').value = hasta;
   cargarDesempenoRepartidores();
 }
@@ -268,7 +274,7 @@ async function cargarDesempenoRepartidores() {
   const cursor = new Date(desde + 'T00:00:00');
   const fin = new Date(hasta + 'T00:00:00');
   while (cursor <= fin) {
-    dias.push(cursor.toISOString().slice(0, 10));
+    dias.push(fechaLocalISO(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
   const MESES_CORTOS_REP = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -888,16 +894,8 @@ document.querySelectorAll('.chip-fecha').forEach((btn) => {
 
 function aplicarPresetFecha(preset) {
   document.querySelectorAll('.chip-fecha').forEach((b) => b.classList.toggle('activo', b.dataset.preset === preset));
-  const hoy = new Date();
-  const fmt = (d) => d.toISOString().slice(0, 10);
-  let desde = new Date(hoy);
-  const hasta = fmt(hoy);
-
-  if (preset === 'semana') desde.setDate(hoy.getDate() - hoy.getDay());
-  else if (preset === 'mes') desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
-  // 'hoy' se queda igual a hoy
-
-  document.getElementById('informes-desde').value = fmt(desde);
+  const { desde, hasta } = rangoPresetFechas(preset);
+  document.getElementById('informes-desde').value = desde;
   document.getElementById('informes-hasta').value = hasta;
   cargarInformes();
 }
@@ -936,7 +934,6 @@ async function cargarInformes() {
   const maxDia = Math.max(1, ...d.porDia.map((r) => r.total));
   const maxMetodo = Math.max(1, ...d.porMetodo.map((r) => r.total));
   const maxTipo = Math.max(1, ...d.porTipo.map((r) => r.total));
-  const maxProducto = Math.max(1, ...d.topProductos.map((r) => r.cantidad));
 
   cont.innerHTML = `
     <div class="kpi-grid">
@@ -946,6 +943,11 @@ async function cargarInformes() {
       <div class="kpi-card"><div class="valor">${d.porcentajeCancelados}%</div><div class="etiqueta">Cancelados (${d.pedidosCancelados})</div></div>
       <div class="kpi-card"><div class="valor">${d.tiempoPromedioCocinaMin ?? '—'}${d.tiempoPromedioCocinaMin ? ' min' : ''}</div><div class="etiqueta">Tiempo en cocina</div></div>
       <div class="kpi-card"><div class="valor">${d.resenaPromedio ?? '—'}${d.resenaPromedio ? ' ⭐' : ''}</div><div class="etiqueta">Reseñas (${d.resenaCantidad})</div></div>
+    </div>
+
+    <div class="informes-seccion" id="informes-productos">
+      <h3>🧾 Productos vendidos</h3>
+      <div id="informes-productos-cuerpo"><p style="color:#999;font-size:13px">Cargando…</p></div>
     </div>
 
     <div class="informes-seccion">
@@ -1012,26 +1014,130 @@ async function cargarInformes() {
     </div>
 
     <div class="informes-seccion">
-      <h3>🏆 Top 10 productos más vendidos</h3>
-      ${
-        d.topProductos.length
-          ? d.topProductos
-              .map(
-                (r, i) => `
-        <div class="barra-fila">
-          <span class="etiqueta-barra">${i + 1}. ${escapeHtml(r.nombre)}</span>
-          <div class="barra-fondo"><div class="barra-relleno" style="width:${(r.cantidad / maxProducto) * 100}%"><span>${r.cantidad} · $${r.total.toFixed(0)}</span></div></div>
-        </div>`
-              )
-              .join('')
-          : '<p style="color:#999;font-size:13px">Sin ventas en este rango</p>'
-      }
-    </div>
-
-    <div class="informes-seccion">
       <h3>👥 Clientes nuevos en el periodo</h3>
       <div class="kpi-card" style="max-width:200px"><div class="valor">${d.clientesNuevos}</div><div class="etiqueta">Clientes nuevos (todas las sucursales)</div></div>
     </div>`;
+
+  cargarProductosVendidos(desde, hasta, sucursalId);
+}
+
+// ---------- Productos vendidos (lista completa del periodo) ----------
+const INF_PROD = { orden: 'cantidad', buscar: '', porCobrar: true, datos: null, consulta: null, token: 0 };
+const infNum = (n) => Number(n || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 });
+const infMoneda = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('es-MX');
+
+async function cargarProductosVendidos(desde, hasta, sucursalId) {
+  const cuerpo = document.getElementById('informes-productos-cuerpo');
+  if (!cuerpo) return;
+  INF_PROD.consulta = { desde, hasta, sucursalId };
+  const mi = ++INF_PROD.token;
+  cuerpo.innerHTML = '<p style="color:#999;font-size:13px">Cargando…</p>';
+  let resp;
+  try {
+    resp = await fetch(`/api/informes/productos?sucursal_id=${sucursalId}&fecha_desde=${desde}&fecha_hasta=${hasta}&por_cobrar=${INF_PROD.porCobrar ? 1 : 0}`);
+  } catch (e) {
+    if (mi === INF_PROD.token) cuerpo.innerHTML = '<p style="color:#b8232f;font-size:13px">No se pudo conectar. Revisa tu internet e intenta de nuevo.</p>';
+    return;
+  }
+  if (mi !== INF_PROD.token) return; // llegó tarde: ya hay una consulta más reciente
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    cuerpo.innerHTML = `<p style="color:#b8232f;font-size:13px">${escapeHtml(err.error || 'No se pudo cargar la lista de productos')}</p>`;
+    return;
+  }
+  INF_PROD.datos = await resp.json();
+  pintarProductosVendidos();
+}
+
+function pintarProductosVendidos() {
+  const d = INF_PROD.datos;
+  const cuerpo = document.getElementById('informes-productos-cuerpo');
+  if (!d || !cuerpo) return;
+  const r = d.resumen;
+  const { desde, hasta } = INF_PROD.consulta;
+  const rango = desde === hasta ? dashFechaCorta(desde) : `${dashFechaCorta(desde)} – ${dashFechaCorta(hasta)}`;
+
+  if (!d.productos.length) {
+    cuerpo.innerHTML = `<p style="color:#999;font-size:13px">Sin productos vendidos en este periodo.</p>
+      ${r.por_cobrar_pedidos && !d.incluye_por_cobrar ? `<button class="inv-chip" data-pv="cobrar">Incluir ${r.por_cobrar_pedidos} pedido${r.por_cobrar_pedidos === 1 ? '' : 's'} por cobrar</button>` : ''}`;
+    const b = cuerpo.querySelector('[data-pv="cobrar"]');
+    if (b) b.addEventListener('click', () => { INF_PROD.porCobrar = true; cargarProductosVendidos(desde, hasta, INF_PROD.consulta.sucursalId); });
+    return;
+  }
+
+  cuerpo.innerHTML = `
+    <div style="font-size:13px;color:#666;margin-bottom:8px"><b>${r.productos}</b> producto${r.productos === 1 ? '' : 's'} · <b>${infNum(r.unidades)}</b> unidades · <b>${infMoneda(r.total)}</b> <span style="color:#999">(${rango})</span></div>
+    ${r.por_cobrar_pedidos
+      ? `<div style="font-size:12px;color:#7a5c00;background:#fff3cd;border-radius:8px;padding:6px 10px;margin-bottom:8px">${d.incluye_por_cobrar ? 'Incluye' : 'No incluye'} ${infMoneda(r.por_cobrar_total)} de ${r.por_cobrar_pedidos} pedido${r.por_cobrar_pedidos === 1 ? '' : 's'} aún por cobrar. Las «Ventas» de arriba solo cuentan lo ya cobrado.</div>`
+      : ''}
+    <div class="inv-chips" style="margin-bottom:8px">
+      ${[['cantidad', 'Más vendidos'], ['total', 'Mayor venta $'], ['categoria', 'Por categoría'], ['nombre', 'A–Z']].map(([k, et]) => `<button class="inv-chip ${INF_PROD.orden === k ? 'activo' : ''}" data-pv-orden="${k}">${et}</button>`).join('')}
+      <button class="inv-chip ${INF_PROD.porCobrar ? 'activo' : ''}" data-pv="cobrar-toggle">${INF_PROD.porCobrar ? '✓ ' : ''}Incluir por cobrar</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:6px">
+      <input class="inv-input" id="pv-buscar" placeholder="Buscar producto…" value="${escapeHtml(INF_PROD.buscar).replace(/"/g, '&quot;')}" />
+      <button class="inv-chip" data-pv="copiar" style="white-space:nowrap">📋 Copiar lista</button>
+    </div>
+    <div id="pv-lista"></div>`;
+
+  cuerpo.querySelectorAll('[data-pv-orden]').forEach((b) => b.addEventListener('click', () => { INF_PROD.orden = b.dataset.pvOrden; pintarProductosVendidos(); }));
+  cuerpo.querySelector('[data-pv="cobrar-toggle"]').addEventListener('click', () => { INF_PROD.porCobrar = !INF_PROD.porCobrar; cargarProductosVendidos(desde, hasta, INF_PROD.consulta.sucursalId); });
+  cuerpo.querySelector('[data-pv="copiar"]').addEventListener('click', copiarProductosVendidos);
+  document.getElementById('pv-buscar').addEventListener('input', (e) => { INF_PROD.buscar = e.target.value; pintarListaProductosVendidos(); });
+  pintarListaProductosVendidos();
+}
+
+function productosVendidosFiltrados() {
+  const q = INF_PROD.buscar.trim().toLowerCase();
+  const lista = INF_PROD.datos.productos.filter((p) => !q || p.nombre.toLowerCase().includes(q));
+  const o = INF_PROD.orden;
+  if (o === 'total') lista.sort((a, b) => b.total - a.total);
+  else if (o === 'nombre') lista.sort((a, b) => a.nombre.localeCompare(b.nombre));
+  else if (o === 'categoria') lista.sort((a, b) => a.categoria.localeCompare(b.categoria) || b.cantidad - a.cantidad);
+  return lista; // 'cantidad' ya viene ordenada del servidor
+}
+
+function pintarListaProductosVendidos() {
+  const cont = document.getElementById('pv-lista');
+  if (!cont) return;
+  const lista = productosVendidosFiltrados();
+  if (!lista.length) return (cont.innerHTML = '<p style="color:#999;font-size:13px;padding:8px 0">Ningún producto coincide con la búsqueda.</p>');
+  const max = Math.max(1, ...INF_PROD.datos.productos.map((p) => (INF_PROD.orden === 'total' ? p.total : p.cantidad)));
+
+  let categoriaActual = null;
+  cont.innerHTML = lista.map((p, i) => {
+    let grupo = '';
+    if (INF_PROD.orden === 'categoria' && p.categoria !== categoriaActual) {
+      categoriaActual = p.categoria;
+      const delGrupo = lista.filter((x) => x.categoria === p.categoria);
+      grupo = `<div class="pv-grupo"><span>${escapeHtml(p.categoria)}</span><span>${infNum(delGrupo.reduce((s, x) => s + x.cantidad, 0))} · ${infMoneda(delGrupo.reduce((s, x) => s + x.total, 0))}</span></div>`;
+    }
+    const vars = p.variantes.length ? p.variantes.map((v) => `${escapeHtml(v.nombre)} ×${v.cantidad}`).join(' · ') : '';
+    const piezas = p.piezas !== p.cantidad ? `= ${infNum(p.piezas)} piezas` : '';
+    const sub = [INF_PROD.orden === 'categoria' ? '' : escapeHtml(p.categoria), vars, piezas].filter(Boolean).join(' · ');
+    const valor = INF_PROD.orden === 'total' ? p.total : p.cantidad;
+    return `${grupo}<div class="pv-fila">
+      <div style="flex:1;min-width:0">
+        <div class="pv-nombre">${INF_PROD.orden === 'cantidad' || INF_PROD.orden === 'total' ? `<span class="pv-rank">${i + 1}</span>` : ''}${escapeHtml(p.nombre)}</div>
+        <div class="pv-sub">${sub}</div>
+        <div class="pv-barra"><i style="width:${Math.max(2, (valor / max) * 100)}%"></i></div>
+      </div>
+      <div><div class="pv-cant">${infNum(p.cantidad)}</div><div class="pv-total">${infMoneda(p.total)}</div></div>
+    </div>`;
+  }).join('');
+}
+
+async function copiarProductosVendidos() {
+  const { desde, hasta } = INF_PROD.consulta;
+  const rango = desde === hasta ? dashFechaCorta(desde) : `${dashFechaCorta(desde)} – ${dashFechaCorta(hasta)}`;
+  const lineas = INF_PROD.datos.productos.map((p) => `${infNum(p.cantidad)} × ${p.nombre}${p.piezas !== p.cantidad ? ` (${infNum(p.piezas)} piezas)` : ''} — ${infMoneda(p.total)}`);
+  const texto = `Productos vendidos (${rango})\n${lineas.join('\n')}\nTotal: ${infNum(INF_PROD.datos.resumen.unidades)} unidades · ${infMoneda(INF_PROD.datos.resumen.total)}`;
+  try {
+    await navigator.clipboard.writeText(texto);
+    alert('Lista copiada. Ya puedes pegarla en WhatsApp.');
+  } catch (e) {
+    alert('Tu navegador no permitió copiar. Puedes tomar una captura de la pantalla.');
+  }
 }
 
 // ==================== PERMISOS SEGÚN PUESTO ====================

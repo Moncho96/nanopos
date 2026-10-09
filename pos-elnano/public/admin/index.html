@@ -309,6 +309,18 @@
   .kpi-card .etiqueta { font-size: 12px; color: #888; margin-top: 4px; }
   .informes-seccion { background: white; border-radius: 12px; padding: 16px; margin-bottom: 14px; }
   .informes-seccion h3 { margin: 0 0 12px; font-size: 15px; }
+  .pv-fila { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid #f0f0f0; }
+  .pv-fila:last-child { border-bottom: none; }
+  .pv-fila > div:last-child { min-width: 62px; }
+  .pv-nombre { font-weight: 700; font-size: 14px; }
+  .pv-rank { display: inline-block; min-width: 22px; color: #b8232f; font-weight: 800; }
+  .pv-sub { font-size: 12px; color: #888; margin: 2px 0 5px; line-height: 1.4; }
+  .pv-barra { background: #f0f0f0; height: 6px; border-radius: 3px; overflow: hidden; }
+  .pv-barra > i { display: block; height: 100%; background: #b8232f; }
+  .pv-cant { font-size: 22px; font-weight: 800; text-align: right; line-height: 1.1; }
+  .pv-total { font-size: 12px; color: #888; text-align: right; }
+  .pv-grupo { display: flex; justify-content: space-between; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; color: #888; font-weight: 800; margin: 14px 0 2px; }
+  body.dark .pv-fila { border-color: #2a2a2a; } body.dark .pv-barra { background: #333; }
   .barra-fila { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; font-size: 13px; }
   .barra-fila .etiqueta-barra { width: 110px; flex-shrink: 0; color: #555; }
   .barra-fondo { flex: 1; background: #f0f0f0; border-radius: 6px; height: 22px; position: relative; overflow: hidden; }
