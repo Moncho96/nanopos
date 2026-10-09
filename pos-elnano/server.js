@@ -2836,6 +2836,80 @@ app.get('/api/dashboard', requierePuesto(), async (req, res) => {
   }
 });
 
+// Lista COMPLETA de productos vendidos en un periodo (cantidad, piezas equivalentes, venta y desglose por
+// variante). A diferencia del Top 10 de /api/informes, puede incluir los pedidos que aún no se cobran
+// (una mesa abierta ya se vendió aunque falte el pago), para ver lo vendido del día mientras corre.
+app.get('/api/informes/productos', requierePuesto('cajero'), async (req, res) => {
+  const { sucursal_id, fecha_desde, fecha_hasta } = req.query;
+  const fechaOk = (f) => /^\d{4}-\d{2}-\d{2}$/.test(f || '') && !Number.isNaN(new Date(`${f}T00:00:00Z`).getTime());
+  if (!fechaOk(fecha_desde) || !fechaOk(fecha_hasta)) return res.status(400).json({ error: 'Falta el rango de fechas' });
+  const incluirPorCobrar = req.query.por_cobrar !== '0';
+
+  try {
+    // Variante elegida en cada renglón (y cuántas piezas representa: ej. una "Orden" = 5)
+    const opciones = `CASE WHEN jsonb_typeof(pi.opciones_seleccionadas::jsonb) = 'array' THEN pi.opciones_seleccionadas::jsonb ELSE '[]'::jsonb END`;
+    const variante = (campo) => `(SELECT ${campo} FROM jsonb_array_elements(${opciones}) o WHERE o->>'tipo' = 'variante' LIMIT 1)`;
+
+    const params = [];
+    const filtro = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, params);
+    const { rows } = await pool.query(
+      `WITH items AS (
+         SELECT pi.producto_id, pi.cantidad, pi.precio_unitario,
+                ${variante("o->>'nombre'")} AS variante,
+                COALESCE(${variante("NULLIF(o->>'multiplicador', '')::numeric")}, 1) AS mult
+         FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id
+         WHERE pi.cancelado = false AND p.cancelado = false ${incluirPorCobrar ? '' : 'AND p.pagado = true'} ${filtro}
+       )
+       SELECT i.producto_id, pr.nombre, COALESCE(c.nombre, 'Sin categoría') AS categoria, i.variante, i.mult,
+              SUM(i.cantidad)::int AS cantidad, COALESCE(SUM(i.cantidad * i.precio_unitario), 0) AS total
+       FROM items i JOIN productos pr ON pr.id = i.producto_id LEFT JOIN categorias c ON c.id = pr.categoria_id
+       GROUP BY i.producto_id, pr.nombre, c.nombre, i.variante, i.mult`,
+      params
+    );
+
+    const porProducto = new Map();
+    rows.forEach((r) => {
+      if (!porProducto.has(r.producto_id)) {
+        porProducto.set(r.producto_id, { producto_id: r.producto_id, nombre: r.nombre, categoria: r.categoria, cantidad: 0, piezas: 0, total: 0, variantes: [] });
+      }
+      const p = porProducto.get(r.producto_id);
+      p.cantidad += r.cantidad;
+      p.piezas += r.cantidad * Number(r.mult);
+      p.total += Number(r.total);
+      if (r.variante) p.variantes.push({ nombre: r.variante, cantidad: r.cantidad });
+    });
+    const productos = [...porProducto.values()].map((p) => ({
+      ...p, piezas: Math.round(p.piezas * 1000) / 1000, total: Math.round(p.total * 100) / 100,
+      variantes: p.variantes.sort((a, b) => b.cantidad - a.cantidad),
+    })).sort((a, b) => b.cantidad - a.cantidad || b.total - a.total || a.nombre.localeCompare(b.nombre));
+
+    // Cuánto de lo vendido todavía no se cobra (se informa siempre, esté o no incluido en la lista)
+    const paramsCobrar = [];
+    const filtroCobrar = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, paramsCobrar);
+    const { rows: porCobrar } = await pool.query(
+      `SELECT COUNT(DISTINCT p.id)::int AS pedidos, COALESCE(SUM(pi.cantidad * pi.precio_unitario), 0) AS total
+       FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id
+       WHERE pi.cancelado = false AND p.cancelado = false AND p.pagado = false ${filtroCobrar}`,
+      paramsCobrar
+    );
+
+    res.json({
+      incluye_por_cobrar: incluirPorCobrar,
+      productos,
+      resumen: {
+        productos: productos.length,
+        unidades: productos.reduce((acc, p) => acc + p.cantidad, 0),
+        total: Math.round(productos.reduce((acc, p) => acc + p.total, 0) * 100) / 100,
+        por_cobrar_pedidos: porCobrar[0].pedidos,
+        por_cobrar_total: Math.round(Number(porCobrar[0].total) * 100) / 100,
+      },
+    });
+  } catch (err) {
+    console.error('Error en /api/informes/productos:', err);
+    res.status(500).json({ error: 'No se pudo calcular la lista de productos vendidos' });
+  }
+});
+
 app.get('/api/informes', requierePuesto('cajero'), async (req, res) => {
   const { sucursal_id, fecha_desde, fecha_hasta } = req.query;
   if (!fecha_desde || !fecha_hasta) return res.status(400).json({ error: 'Falta el rango de fechas' });
