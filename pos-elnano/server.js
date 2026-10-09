@@ -168,6 +168,9 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 // el POS y la cocina de las dos sucursales). Se deja registrado en el log para poder revisarlo.
 process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', err));
 
+// Inventario avanzado (kardex, mermas, compras, producción, cierre de turno, alertas): ver inventario.js
+const inventario = require('./inventario')({ pool });
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
@@ -217,8 +220,10 @@ async function obtenerPedidoCompleto(pedidoId) {
 // - la receta base del producto (por 1 pieza/unidad), escalada por el multiplicador
 //   de la variante elegida (ej. "Orden" = 5 piezas)
 // - los insumos extra que agregue cualquier opción elegida (ej. "Con aguacate", "Extra tocino")
-async function ajustarInventarioPorProducto(productoId, cantidadVendida, sucursalId, signo, opcionesSeleccionadas) {
+async function ajustarInventarioPorProducto(productoId, cantidadVendida, sucursalId, signo, opcionesSeleccionadas, ref = {}) {
   opcionesSeleccionadas = opcionesSeleccionadas || [];
+  // Cada descuento (venta) o devolución (cancelación) queda en el historial, ligado a su pedido
+  const meta = { tipo: signo < 0 ? 'venta' : 'devolucion_venta', referencia_tipo: 'pedido', referencia_id: ref.pedido_id };
 
   let multiplicador = 1;
   opcionesSeleccionadas.forEach((o) => {
@@ -231,7 +236,7 @@ async function ajustarInventarioPorProducto(productoId, cantidadVendida, sucursa
   );
   for (const r of receta) {
     const delta = signo * Number(r.cantidad) * multiplicador * Number(cantidadVendida);
-    await ajustarStockInsumo(r.insumo_id, sucursalId, delta);
+    await ajustarStockInsumo(r.insumo_id, sucursalId, delta, meta);
   }
 
   const opcionIds = opcionesSeleccionadas.map((o) => o.id).filter(Boolean);
@@ -242,18 +247,18 @@ async function ajustarInventarioPorProducto(productoId, cantidadVendida, sucursa
     );
     for (const e of extras) {
       const delta = signo * Number(e.cantidad) * Number(cantidadVendida);
-      await ajustarStockInsumo(e.insumo_id, sucursalId, delta);
+      await ajustarStockInsumo(e.insumo_id, sucursalId, delta, meta);
     }
   }
 }
 
-async function ajustarStockInsumo(insumoId, sucursalId, delta) {
-  await pool.query(
-    `INSERT INTO inventario_stock (insumo_id, sucursal_id, stock_actual)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (insumo_id, sucursal_id) DO UPDATE SET stock_actual = inventario_stock.stock_actual + $3`,
-    [insumoId, sucursalId, delta]
-  );
+async function ajustarStockInsumo(insumoId, sucursalId, delta, meta = {}) {
+  await inventario.mover(pool, {
+    insumo_id: insumoId, sucursal_id: sucursalId, cantidad: delta,
+    tipo: meta.tipo || 'ajuste_manual', motivo: meta.motivo, nota: meta.nota,
+    referencia_tipo: meta.referencia_tipo, referencia_id: meta.referencia_id,
+    empleado: meta.empleado, costo_unitario: meta.costo_unitario,
+  });
 }
 
 async function recalcularTotalPedido(pedidoId) {
@@ -479,14 +484,11 @@ app.patch('/api/insumos/:id/stock', requierePuesto(), async (req, res) => {
   if (!sucursal_id || stock_actual === undefined) {
     return res.status(400).json({ error: 'Falta sucursal_id o stock_actual' });
   }
-  const { rows } = await pool.query(
-    `INSERT INTO inventario_stock (insumo_id, sucursal_id, stock_actual)
-     VALUES ($1,$2,$3)
-     ON CONFLICT (insumo_id, sucursal_id) DO UPDATE SET stock_actual = $3
-     RETURNING *`,
-    [req.params.id, sucursal_id, stock_actual]
-  );
-  res.json(rows[0]);
+  await inventario.fijar(pool, {
+    insumo_id: Number(req.params.id), sucursal_id: Number(sucursal_id), nuevo: Number(stock_actual),
+    tipo: 'ajuste_manual', motivo: 'Ajuste desde Menú → Insumos', empleado: { id: req.empleado?.id, nombre: req.empleado?.nombre },
+  });
+  res.json({ insumo_id: Number(req.params.id), sucursal_id: Number(sucursal_id), stock_actual: Number(stock_actual) });
 });
 
 // ---------- Recetas (insumos por producto) ----------
@@ -649,13 +651,11 @@ app.post('/api/conteos', requierePuesto(), async (req, res) => {
     const diferencia = Number((contado - teorico).toFixed(3));
     resumen.push({ insumo_id: c.insumo_id, nombre: rows[0].nombre, unidad: rows[0].unidad, teorico, contado, diferencia });
 
-    // El conteo físico corrige el stock del sistema hacia adelante
-    await pool.query(
-      `INSERT INTO inventario_stock (insumo_id, sucursal_id, stock_actual)
-       VALUES ($1,$2,$3)
-       ON CONFLICT (insumo_id, sucursal_id) DO UPDATE SET stock_actual = $3`,
-      [c.insumo_id, sucursal_id, contado]
-    );
+    // El conteo físico corrige el stock del sistema hacia adelante (y la diferencia queda en el historial)
+    await inventario.fijar(pool, {
+      insumo_id: Number(c.insumo_id), sucursal_id: Number(sucursal_id), nuevo: contado,
+      tipo: 'ajuste_conteo', motivo: 'Conteo físico', empleado: { id: req.empleado?.id, nombre: req.empleado?.nombre },
+    });
   }
 
   if (!resumen.length) {
@@ -788,7 +788,10 @@ app.post('/api/compras', requierePuesto(), async (req, res) => {
 
     // Suma el stock comprado (fuera de la transacción, mismo patrón que el resto del inventario)
     for (const it of items) {
-      await ajustarStockInsumo(it.insumo_id, sucursal_id, Number(it.cantidad));
+      await ajustarStockInsumo(it.insumo_id, sucursal_id, Number(it.cantidad), {
+        tipo: 'entrada_compra', referencia_tipo: 'compra', referencia_id: compra.id,
+        costo_unitario: it.costo_unitario || undefined, empleado: { id: req.empleado?.id, nombre: req.empleado?.nombre },
+      });
     }
 
     res.json(compra);
@@ -2101,7 +2104,7 @@ app.post('/api/pedidos', async (req, res) => {
 
     // Descuenta el inventario según la receta de cada producto vendido
     for (const it of items) {
-      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, sucursal_id, -1, it.opciones_seleccionadas);
+      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, sucursal_id, -1, it.opciones_seleccionadas, { pedido_id: pedido.id });
     }
 
     let pedidoCompleto = { ...pedido, items: itemsConNombre };
@@ -2330,7 +2333,7 @@ app.patch('/api/pedidos/:id/cancelar', requierePuesto('cajero'), verificarSucurs
       [id]
     );
     for (const it of itemsActivos) {
-      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, pedido.sucursal_id, 1, it.opciones_seleccionadas);
+      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, pedido.sucursal_id, 1, it.opciones_seleccionadas, { pedido_id: pedido.id });
     }
 
     // Si se habían otorgado puntos de lealtad por este pedido, se los quitamos al cliente
@@ -2372,7 +2375,7 @@ app.post('/api/pedidos/:id/items', verificarSucursalDelPedido, async (req, res) 
 
     const { rows: pedRows } = await pool.query('SELECT sucursal_id, estado FROM pedidos WHERE id = $1', [id]);
     if (pedRows[0]) {
-      await ajustarInventarioPorProducto(producto_id, cantidad, pedRows[0].sucursal_id, -1, opciones_seleccionadas);
+      await ajustarInventarioPorProducto(producto_id, cantidad, pedRows[0].sucursal_id, -1, opciones_seleccionadas, { pedido_id: Number(id) });
 
       // Si el pedido ya estaba "listo" o "entregado", se reabre para que el producto
       // nuevo vuelva a aparecer en cocina — los productos viejos quedan marcados como
@@ -2408,7 +2411,7 @@ app.patch('/api/pedido_items/:id/cancelar', async (req, res) => {
     await pool.query('UPDATE pedido_items SET cancelado = true WHERE id = $1', [id]);
 
     if (!item.cancelado) {
-      await ajustarInventarioPorProducto(item.producto_id, item.cantidad, item.sucursal_id, 1, item.opciones_seleccionadas);
+      await ajustarInventarioPorProducto(item.producto_id, item.cantidad, item.sucursal_id, 1, item.opciones_seleccionadas, { pedido_id: item.pedido_id });
     }
 
     await recalcularTotalPedido(item.pedido_id);
@@ -3245,6 +3248,9 @@ app.post('/api/plan-compras', requierePuesto(), async (req, res) => {
     res.status(500).json({ error: 'No se pudo generar la sugerencia de compras' });
   }
 });
+
+// Rutas del inventario avanzado (/api/inventario/...)
+inventario.registrarRutas(app, { requierePuesto, fechaNegocioSQL, fechaNegocioActualJS });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
