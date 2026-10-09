@@ -1066,7 +1066,7 @@ function pintarProductosVendidos() {
   }
 
   cuerpo.innerHTML = `
-    <div style="font-size:13px;color:#666;margin-bottom:8px"><b>${r.productos}</b> producto${r.productos === 1 ? '' : 's'} · <b>${infNum(r.unidades)}</b> unidades · <b>${infMoneda(r.total)}</b> <span style="color:#999">(${rango})</span></div>
+    <div style="font-size:13px;color:#666;margin-bottom:8px"><b>${r.productos}</b> producto${r.productos === 1 ? '' : 's'} · <b>${infNum(r.unidades)}</b> unidades · <b>${infMoneda(r.total)}</b> <span style="color:#999">(${rango})</span>${r.didi_unidades ? `<br><span style="font-size:12px;color:#5a2ca0">🛵 ${infNum(r.didi_unidades)} de esas unidades son de pedidos DiDi (sin monto: su venta va en el corte)</span>` : ''}</div>
     ${r.por_cobrar_pedidos
       ? `<div style="font-size:12px;color:#7a5c00;background:#fff3cd;border-radius:8px;padding:6px 10px;margin-bottom:8px">${d.incluye_por_cobrar ? 'Incluye' : 'No incluye'} ${infMoneda(r.por_cobrar_total)} de ${r.por_cobrar_pedidos} pedido${r.por_cobrar_pedidos === 1 ? '' : 's'} aún por cobrar. Las «Ventas» de arriba solo cuentan lo ya cobrado.</div>`
       : ''}
@@ -1114,7 +1114,8 @@ function pintarListaProductosVendidos() {
     }
     const vars = p.variantes.length ? p.variantes.map((v) => `${escapeHtml(v.nombre)} ×${v.cantidad}`).join(' · ') : '';
     const piezas = p.piezas !== p.cantidad ? `= ${infNum(p.piezas)} piezas` : '';
-    const sub = [INF_PROD.orden === 'categoria' ? '' : escapeHtml(p.categoria), vars, piezas].filter(Boolean).join(' · ');
+    const didi = p.didi ? `🛵 ${infNum(p.didi)} por DiDi` : '';
+    const sub = [INF_PROD.orden === 'categoria' ? '' : escapeHtml(p.categoria), vars, piezas, didi].filter(Boolean).join(' · ');
     const valor = INF_PROD.orden === 'total' ? p.total : p.cantidad;
     return `${grupo}<div class="pv-fila">
       <div style="flex:1;min-width:0">
@@ -1130,7 +1131,7 @@ function pintarListaProductosVendidos() {
 async function copiarProductosVendidos() {
   const { desde, hasta } = INF_PROD.consulta;
   const rango = desde === hasta ? dashFechaCorta(desde) : `${dashFechaCorta(desde)} – ${dashFechaCorta(hasta)}`;
-  const lineas = INF_PROD.datos.productos.map((p) => `${infNum(p.cantidad)} × ${p.nombre}${p.piezas !== p.cantidad ? ` (${infNum(p.piezas)} piezas)` : ''} — ${infMoneda(p.total)}`);
+  const lineas = INF_PROD.datos.productos.map((p) => `${infNum(p.cantidad)} × ${p.nombre}${p.piezas !== p.cantidad ? ` (${infNum(p.piezas)} piezas)` : ''}${p.didi ? ` [${infNum(p.didi)} DiDi]` : ''} — ${infMoneda(p.total)}`);
   const texto = `Productos vendidos (${rango})\n${lineas.join('\n')}\nTotal: ${infNum(INF_PROD.datos.resumen.unidades)} unidades · ${infMoneda(INF_PROD.datos.resumen.total)}`;
   try {
     await navigator.clipboard.writeText(texto);
