@@ -223,7 +223,7 @@ async function obtenerPedidoCompleto(pedidoId) {
 async function ajustarInventarioPorProducto(productoId, cantidadVendida, sucursalId, signo, opcionesSeleccionadas, ref = {}) {
   opcionesSeleccionadas = opcionesSeleccionadas || [];
   // Cada descuento (venta) o devolución (cancelación) queda en el historial, ligado a su pedido
-  const meta = { tipo: signo < 0 ? 'venta' : 'devolucion_venta', referencia_tipo: 'pedido', referencia_id: ref.pedido_id };
+  const meta = { tipo: signo < 0 ? 'venta' : 'devolucion_venta', referencia_tipo: 'pedido', referencia_id: ref.pedido_id, nota: ref.nota };
 
   let multiplicador = 1;
   opcionesSeleccionadas.forEach((o) => {
@@ -2038,9 +2038,34 @@ app.post('/api/importar-historico', requierePuesto(), async (req, res) => {
 });
 
 app.post('/api/pedidos', async (req, res) => {
-  const { sucursal_id, cliente_id, cliente_nombre, tipo, notas, items, costo_envio, origen } = req.body;
+  const { sucursal_id, cliente_id, tipo, notas, items, origen } = req.body;
+  let { cliente_nombre, costo_envio } = req.body;
   if (!sucursal_id || !items || !items.length) {
     return res.status(400).json({ error: 'Falta sucursal_id o items' });
+  }
+
+  // Pedido DiDi: solo mueve inventario (sin monto, sin cobro, sin cocina). Esta ruta es pública porque
+  // /pedir la usa sin sesión, así que aquí se exige haber iniciado sesión en el POS para marcarlo como DiDi.
+  const esDidi = origen === 'didi';
+  if (esDidi) {
+    const empleadoDidi = verificarSesion(obtenerCookie(req, 'pos_session'));
+    if (!empleadoDidi) return res.status(401).json({ error: 'Inicia sesión en el POS para registrar pedidos de DiDi' });
+    if (empleadoDidi.sucursal_id && String(empleadoDidi.sucursal_id) !== String(sucursal_id)) {
+      return res.status(403).json({ error: 'No tienes acceso a esa sucursal' });
+    }
+    if (items.length > 100) return res.status(400).json({ error: 'Demasiados renglones en un solo pedido' });
+    for (const it of items) {
+      if (!Number.isInteger(it.cantidad) || it.cantidad < 1 || it.cantidad > 200) {
+        return res.status(400).json({ error: 'Cada producto debe llevar una cantidad entera entre 1 y 200' });
+      }
+    }
+    const idsProductos = [...new Set(items.map((it) => Number(it.producto_id)))];
+    const { rows: validos } = await pool.query('SELECT id FROM productos WHERE id = ANY($1) AND sucursal_id = $2', [idsProductos, sucursal_id]);
+    if (validos.length !== idsProductos.length) {
+      return res.status(400).json({ error: 'Hay un producto que no pertenece al menú de esta sucursal' });
+    }
+    cliente_nombre = String(cliente_nombre || 'DiDi').replace(/\s+/g, ' ').trim().slice(0, 60) || 'DiDi';
+    costo_envio = 0;
   }
   if (!cliente_nombre || !cliente_nombre.trim()) {
     return res.status(400).json({ error: 'El nombre del cliente es obligatorio' });
@@ -2050,7 +2075,7 @@ app.post('/api/pedidos', async (req, res) => {
   try {
     await client.query('BEGIN');
     const costoEnvio = Number(costo_envio) || 0;
-    const total = items.reduce((sum, it) => sum + it.cantidad * it.precio_unitario, 0) + costoEnvio;
+    const total = esDidi ? 0 : items.reduce((sum, it) => sum + it.cantidad * it.precio_unitario, 0) + costoEnvio; // DiDi: sin monto
 
     const fechaNegocioHoy = fechaNegocioActualJS();
     // Contador atómico: Postgres serializa este UPSERT, así que dos pedidos que
@@ -2068,9 +2093,19 @@ app.post('/api/pedidos', async (req, res) => {
     const pedidoRes = await client.query(
       `INSERT INTO pedidos (sucursal_id, cliente_id, cliente_nombre, tipo, notas, total, costo_envio, numero_dia, origen)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
-      [sucursal_id, cliente_id || null, cliente_nombre.trim(), tipo || 'mesa', notas || null, total, costoEnvio, numeroDia, origen === 'web' ? 'web' : 'pos']
+      [sucursal_id, esDidi ? null : cliente_id || null, cliente_nombre.trim(), esDidi ? 'para_llevar' : tipo || 'mesa', notas || null, total, costoEnvio, numeroDia, esDidi ? 'didi' : origen === 'web' ? 'web' : 'pos']
     );
-    const pedido = pedidoRes.rows[0];
+    let pedido = pedidoRes.rows[0];
+    if (esDidi) {
+      // Nace ya cerrado: "cobrado" por DiDi, entregado y fuera de cocina, para que no aparezca como pendiente
+      // ni por cobrar. No genera filas en pagos, así que no mueve el corte.
+      const cerrado = await client.query(
+        `UPDATE pedidos SET pagado = true, metodo_pago = 'didi', pagado_en = now(), estado = 'entregado',
+                finalizado = true, finalizado_en = now(), actualizado_en = now() WHERE id = $1 RETURNING *`,
+        [pedido.id]
+      );
+      pedido = cerrado.rows[0];
+    }
 
     const itemRows = [];
     for (const it of items) {
@@ -2081,7 +2116,7 @@ app.post('/api/pedidos', async (req, res) => {
           pedido.id,
           it.producto_id,
           it.cantidad,
-          it.precio_unitario,
+          esDidi ? 0 : it.precio_unitario, // el precio de un pedido DiDi nunca se toma del cliente
           it.notas || null,
           JSON.stringify(it.opciones_seleccionadas || []),
         ]
@@ -2104,7 +2139,7 @@ app.post('/api/pedidos', async (req, res) => {
 
     // Descuenta el inventario según la receta de cada producto vendido
     for (const it of items) {
-      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, sucursal_id, -1, it.opciones_seleccionadas, { pedido_id: pedido.id });
+      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, sucursal_id, -1, it.opciones_seleccionadas, { pedido_id: pedido.id, nota: esDidi ? 'Pedido DiDi' : undefined });
     }
 
     let pedidoCompleto = { ...pedido, items: itemsConNombre };
@@ -2138,7 +2173,7 @@ app.post('/api/pedidos', async (req, res) => {
     }
 
     // Avisa en tiempo real al monitor de cocina de esa sucursal
-    io.to(`sucursal_${sucursal_id}`).emit('nuevo_pedido', pedidoCompleto);
+    if (!esDidi) io.to(`sucursal_${sucursal_id}`).emit('nuevo_pedido', pedidoCompleto); // los de DiDi no pasan por cocina
 
     res.json(pedidoCompleto);
   } catch (err) {
@@ -2333,7 +2368,7 @@ app.patch('/api/pedidos/:id/cancelar', requierePuesto('cajero'), verificarSucurs
       [id]
     );
     for (const it of itemsActivos) {
-      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, pedido.sucursal_id, 1, it.opciones_seleccionadas, { pedido_id: pedido.id });
+      await ajustarInventarioPorProducto(it.producto_id, it.cantidad, pedido.sucursal_id, 1, it.opciones_seleccionadas, { pedido_id: pedido.id, nota: pedido.origen === 'didi' ? 'Pedido DiDi cancelado' : undefined });
     }
 
     // Si se habían otorgado puntos de lealtad por este pedido, se los quitamos al cliente
@@ -2446,6 +2481,10 @@ app.post('/api/pedidos/:id/pagos', requierePuesto('cajero'), verificarSucursalDe
     if (!pedido) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+    if (pedido.origen === 'didi') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Los pedidos de DiDi no se cobran en el POS: su venta se captura en el corte' });
     }
 
     // Borra pagos anteriores de este pedido (por si se está corrigiendo un cobro)
@@ -2622,11 +2661,11 @@ async function metricasCrudasDashboard(desde, hasta) {
               COUNT(*) FILTER (WHERE p.tipo = 'domicilio')::int AS domicilio,
               COUNT(*) FILTER (WHERE p.origen = 'web')::int AS web,
               COUNT(DISTINCT p.cliente_id)::int AS clientes_unicos
-       FROM pedidos p WHERE p.cancelado = false AND p.pagado = true AND ${fPedido} BETWEEN $1 AND $2
+       FROM pedidos p WHERE p.cancelado = false AND p.pagado = true AND p.origen IS DISTINCT FROM 'didi' AND ${fPedido} BETWEEN $1 AND $2
        GROUP BY p.sucursal_id`, p),
     pool.query(
       `SELECT p.sucursal_id, COUNT(*)::int AS creados, COUNT(*) FILTER (WHERE p.cancelado)::int AS cancelados
-       FROM pedidos p WHERE ${fPedido} BETWEEN $1 AND $2 GROUP BY p.sucursal_id`, p),
+       FROM pedidos p WHERE p.origen IS DISTINCT FROM 'didi' AND ${fPedido} BETWEEN $1 AND $2 GROUP BY p.sucursal_id`, p),
     pool.query(
       `SELECT p.sucursal_id, COALESCE(SUM(EXTRACT(EPOCH FROM (p.listo_en - p.creado_en))),0) AS seg, COUNT(*)::int AS n
        FROM pedidos p WHERE p.listo_en IS NOT NULL AND p.cancelado = false AND ${fPedido} BETWEEN $1 AND $2
@@ -2759,7 +2798,7 @@ app.get('/api/dashboard', requierePuesto(), async (req, res) => {
     const [pedDia, gasDia, gasCajaDia, didiDia] = await Promise.all([
       pool.query(
         `SELECT p.sucursal_id, to_char(${fPedido}, 'YYYY-MM-DD') AS dia, COUNT(*)::int AS pedidos, COALESCE(SUM(p.total),0) AS ventas
-         FROM pedidos p WHERE p.cancelado = false AND p.pagado = true AND ${fPedido} BETWEEN $1 AND $2 GROUP BY 1, 2`, pr),
+         FROM pedidos p WHERE p.cancelado = false AND p.pagado = true AND p.origen IS DISTINCT FROM 'didi' AND ${fPedido} BETWEEN $1 AND $2 GROUP BY 1, 2`, pr),
       pool.query(
         `SELECT g.sucursal_id, to_char(${fechaNegocioSQL('g.creado_en')}, 'YYYY-MM-DD') AS dia, COALESCE(SUM(g.monto),0) AS total
          FROM gastos g WHERE ${fechaNegocioSQL('g.creado_en')} BETWEEN $1 AND $2 GROUP BY 1, 2`, pr),
@@ -2854,29 +2893,32 @@ app.get('/api/informes/productos', requierePuesto('cajero'), async (req, res) =>
     const filtro = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, params);
     const { rows } = await pool.query(
       `WITH items AS (
-         SELECT pi.producto_id, pi.cantidad, pi.precio_unitario,
+         SELECT pi.producto_id, pi.cantidad, pi.precio_unitario, (p.origen = 'didi') AS es_didi,
                 ${variante("o->>'nombre'")} AS variante,
                 COALESCE(${variante("NULLIF(o->>'multiplicador', '')::numeric")}, 1) AS mult
          FROM pedido_items pi JOIN pedidos p ON p.id = pi.pedido_id
          WHERE pi.cancelado = false AND p.cancelado = false ${incluirPorCobrar ? '' : 'AND p.pagado = true'} ${filtro}
        )
-       SELECT i.producto_id, pr.nombre, COALESCE(c.nombre, 'Sin categoría') AS categoria, i.variante, i.mult,
+       SELECT i.producto_id, pr.nombre, COALESCE(c.nombre, 'Sin categoría') AS categoria, i.variante, i.mult, i.es_didi,
               SUM(i.cantidad)::int AS cantidad, COALESCE(SUM(i.cantidad * i.precio_unitario), 0) AS total
        FROM items i JOIN productos pr ON pr.id = i.producto_id LEFT JOIN categorias c ON c.id = pr.categoria_id
-       GROUP BY i.producto_id, pr.nombre, c.nombre, i.variante, i.mult`,
+       GROUP BY i.producto_id, pr.nombre, c.nombre, i.variante, i.mult, i.es_didi`,
       params
     );
 
     const porProducto = new Map();
     rows.forEach((r) => {
       if (!porProducto.has(r.producto_id)) {
-        porProducto.set(r.producto_id, { producto_id: r.producto_id, nombre: r.nombre, categoria: r.categoria, cantidad: 0, piezas: 0, total: 0, variantes: [] });
+        porProducto.set(r.producto_id, { producto_id: r.producto_id, nombre: r.nombre, categoria: r.categoria, cantidad: 0, piezas: 0, total: 0, didi: 0, variantes: [] });
       }
       const p = porProducto.get(r.producto_id);
       p.cantidad += r.cantidad;
       p.piezas += r.cantidad * Number(r.mult);
       p.total += Number(r.total);
-      if (r.variante) p.variantes.push({ nombre: r.variante, cantidad: r.cantidad });
+      if (r.es_didi) p.didi += r.cantidad;
+      const enLista = r.variante && p.variantes.find((v) => v.nombre === r.variante);
+      if (enLista) enLista.cantidad += r.cantidad;
+      else if (r.variante) p.variantes.push({ nombre: r.variante, cantidad: r.cantidad });
     });
     const productos = [...porProducto.values()].map((p) => ({
       ...p, piezas: Math.round(p.piezas * 1000) / 1000, total: Math.round(p.total * 100) / 100,
@@ -2900,6 +2942,7 @@ app.get('/api/informes/productos', requierePuesto('cajero'), async (req, res) =>
         productos: productos.length,
         unidades: productos.reduce((acc, p) => acc + p.cantidad, 0),
         total: Math.round(productos.reduce((acc, p) => acc + p.total, 0) * 100) / 100,
+        didi_unidades: productos.reduce((acc, p) => acc + p.didi, 0),
         por_cobrar_pedidos: porCobrar[0].pedidos,
         por_cobrar_total: Math.round(Number(porCobrar[0].total) * 100) / 100,
       },
@@ -2921,17 +2964,17 @@ app.get('/api/informes', requierePuesto('cajero'), async (req, res) => {
     `SELECT COUNT(*)::int AS pedidos, COALESCE(SUM(total),0) AS ventas,
             COALESCE(AVG(total),0) AS ticket_promedio, COALESCE(SUM(costo_envio),0) AS envios,
             COALESCE(SUM(descuento_lealtad),0) AS descuentos_lealtad
-     FROM pedidos p WHERE p.cancelado = false AND p.pagado = true ${f1}`,
+     FROM pedidos p WHERE p.cancelado = false AND p.pagado = true AND p.origen IS DISTINCT FROM 'didi' ${f1}`,
     p1
   );
 
   // 2. Cancelados (para calcular % contra el total de pedidos creados, pagados o no)
   const p2 = [];
   const f2 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p2);
-  const { rows: totalCreadosRows } = await pool.query(`SELECT COUNT(*)::int AS n FROM pedidos p WHERE 1=1 ${f2}`, p2);
+  const { rows: totalCreadosRows } = await pool.query(`SELECT COUNT(*)::int AS n FROM pedidos p WHERE p.origen IS DISTINCT FROM 'didi' ${f2}`, p2);
   const p3 = [];
   const f3 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p3);
-  const { rows: canceladosRows } = await pool.query(`SELECT COUNT(*)::int AS n FROM pedidos p WHERE p.cancelado = true ${f3}`, p3);
+  const { rows: canceladosRows } = await pool.query(`SELECT COUNT(*)::int AS n FROM pedidos p WHERE p.cancelado = true AND p.origen IS DISTINCT FROM 'didi' ${f3}`, p3);
 
   // 3. Ventas por método de pago
   const p4 = [];
@@ -2949,7 +2992,7 @@ app.get('/api/informes', requierePuesto('cajero'), async (req, res) => {
   const f5 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p5);
   const { rows: porTipo } = await pool.query(
     `SELECT p.tipo, COUNT(*)::int AS pedidos, COALESCE(SUM(p.total),0) AS total
-     FROM pedidos p WHERE p.cancelado = false AND p.pagado = true ${f5}
+     FROM pedidos p WHERE p.cancelado = false AND p.pagado = true AND p.origen IS DISTINCT FROM 'didi' ${f5}
      GROUP BY p.tipo ORDER BY total DESC`,
     p5
   );
@@ -2959,7 +3002,7 @@ app.get('/api/informes', requierePuesto('cajero'), async (req, res) => {
   const f6 = filtroFechaYSucursal('p', 'creado_en', fecha_desde, fecha_hasta, sucursal_id, p6);
   const { rows: porDia } = await pool.query(
     `SELECT ${fechaNegocioSQL('p.creado_en')} AS dia, COALESCE(SUM(p.total),0) AS total, COUNT(*)::int AS pedidos
-     FROM pedidos p WHERE p.cancelado = false AND p.pagado = true ${f6}
+     FROM pedidos p WHERE p.cancelado = false AND p.pagado = true AND p.origen IS DISTINCT FROM 'didi' ${f6}
      GROUP BY dia ORDER BY dia`,
     p6
   );
@@ -3069,7 +3112,15 @@ async function calcularCorte(sucursalId, fechaDesde, fechaHasta) {
 
   const { rows: pedidosCount } = await pool.query(
     `SELECT COUNT(*) AS cantidad, COALESCE(SUM(costo_envio), 0) AS total_envios
-     FROM pedidos WHERE sucursal_id = $1 AND ${fechaNegocioSQL('pagado_en')} BETWEEN $2 AND $3 AND pagado = true AND cancelado = false`,
+     FROM pedidos WHERE sucursal_id = $1 AND ${fechaNegocioSQL('pagado_en')} BETWEEN $2 AND $3 AND pagado = true AND cancelado = false AND origen IS DISTINCT FROM 'didi'`,
+    [sucursalId, fechaDesde, fechaHasta]
+  );
+
+  // Pedidos de DiDi registrados en el POS (solo mueven inventario): sirve para compararlos con los de la app de DiDi
+  const { rows: didiCount } = await pool.query(
+    `SELECT COUNT(DISTINCT p.id)::int AS pedidos, COALESCE(SUM(pi.cantidad), 0)::int AS productos
+     FROM pedidos p LEFT JOIN pedido_items pi ON pi.pedido_id = p.id AND pi.cancelado = false
+     WHERE p.sucursal_id = $1 AND p.origen = 'didi' AND p.cancelado = false AND ${fechaNegocioSQL('p.creado_en')} BETWEEN $2 AND $3`,
     [sucursalId, fechaDesde, fechaHasta]
   );
 
@@ -3114,6 +3165,8 @@ async function calcularCorte(sucursalId, fechaDesde, fechaHasta) {
     fechaHasta,
     sucursal_id: Number(sucursalId),
     pedidosCobrados: Number(pedidosCount[0].cantidad),
+    pedidosDidi: didiCount[0].pedidos,
+    productosDidi: didiCount[0].productos,
     envioNoEfectivo: Number(envioNoEfectivo.toFixed(2)),
     resumen,
     totalVentas,
