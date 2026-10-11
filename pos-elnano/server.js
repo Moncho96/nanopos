@@ -170,6 +170,8 @@ process.on('unhandledRejection', (err) => console.error('[unhandledRejection]', 
 
 // Inventario avanzado (kardex, mermas, compras, producción, cierre de turno, alertas): ver inventario.js
 const inventario = require('./inventario')({ pool });
+// Recetas compartidas entre sucursales (mismo platillo = mismo nombre): ver recetas-compartidas.js
+const recetasCompartidas = require('./recetas-compartidas')({ pool });
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
@@ -513,14 +515,29 @@ app.post('/api/productos/:id/receta', requierePuesto(), async (req, res) => {
   if (Math.round(Number(cantidad) * 1000) < 1) {
     return res.status(400).json({ error: 'La cantidad mínima es 0.001 (1 gramo o 1 mililitro si el insumo está en kg o litros)' });
   }
-  const { rows } = await pool.query(
-    `INSERT INTO producto_insumos (producto_id, insumo_id, cantidad)
-     VALUES ($1,$2,$3)
-     ON CONFLICT (producto_id, insumo_id) DO UPDATE SET cantidad = EXCLUDED.cantidad
-     RETURNING *`,
-    [req.params.id, insumo_id, cantidad]
-  );
-  res.json(rows[0]);
+  // Si las recetas se comparten, el mismo cambio se aplica al platillo gemelo de la otra sucursal (todo o nada).
+  // Un encargado limitado a una sucursal nunca modifica la otra.
+  const compartir = !req.empleado?.sucursal_id && (await recetasCompartidas.activo(pool));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO producto_insumos (producto_id, insumo_id, cantidad)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (producto_id, insumo_id) DO UPDATE SET cantidad = EXCLUDED.cantidad
+       RETURNING *`,
+      [req.params.id, insumo_id, cantidad]
+    );
+    const compartido_con = compartir ? await recetasCompartidas.propagarBase(client, req.params.id, insumo_id, cantidad) : [];
+    await client.query('COMMIT');
+    res.json({ ...rows[0], compartido_con });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error guardando ingrediente de la receta:', err);
+    res.status(500).json({ error: 'No se pudo guardar el ingrediente' });
+  } finally {
+    client.release();
+  }
 });
 
 // Todo lo que necesita el editor de recetas en UNA llamada: receta base, grupos de variantes/extras,
@@ -582,6 +599,7 @@ app.post('/api/productos/:id/receta/copiar', requierePuesto(), async (req, res) 
   const modo = req.body.modo === 'reemplazar' ? 'reemplazar' : 'combinar';
   if (!destino || !origen) return res.status(400).json({ error: 'Falta el producto del que se copia' });
   if (destino === origen) return res.status(400).json({ error: 'Elige otro producto distinto' });
+  const compartir = !req.empleado?.sucursal_id && (await recetasCompartidas.activo(pool));
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -601,8 +619,9 @@ app.post('/api/productos/:id/receta/copiar', requierePuesto(), async (req, res) 
        ON CONFLICT (producto_id, insumo_id) DO UPDATE SET cantidad = EXCLUDED.cantidad`,
       [destino, origen]
     );
+    const compartido_con = compartir ? await recetasCompartidas.replicarBase(client, destino) : [];
     await client.query('COMMIT');
-    res.json({ ok: true, copiados: r.rowCount, modo });
+    res.json({ ok: true, copiados: r.rowCount, modo, compartido_con });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('Error copiando receta:', err);
@@ -613,11 +632,21 @@ app.post('/api/productos/:id/receta/copiar', requierePuesto(), async (req, res) 
 });
 
 app.delete('/api/productos/:id/receta/:insumoId', requierePuesto(), async (req, res) => {
-  await pool.query(
-    'DELETE FROM producto_insumos WHERE producto_id = $1 AND insumo_id = $2',
-    [req.params.id, req.params.insumoId]
-  );
-  res.json({ ok: true });
+  const compartir = !req.empleado?.sucursal_id && (await recetasCompartidas.activo(pool));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM producto_insumos WHERE producto_id = $1 AND insumo_id = $2', [req.params.id, req.params.insumoId]);
+    const compartido_con = compartir ? await recetasCompartidas.propagarBase(client, req.params.id, Number(req.params.insumoId), null) : [];
+    await client.query('COMMIT');
+    res.json({ ok: true, compartido_con });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error quitando ingrediente de la receta:', err);
+    res.status(500).json({ error: 'No se pudo quitar el ingrediente' });
+  } finally {
+    client.release();
+  }
 });
 
 
@@ -675,16 +704,33 @@ app.patch('/api/opciones/:id', requierePuesto(), async (req, res) => {
   if (nombre !== undefined && !String(nombre).trim()) return res.status(400).json({ error: 'La opción necesita un nombre' });
   if (precio !== undefined && precio !== null && !(Number(precio) >= 0)) return res.status(400).json({ error: 'El precio no puede ser negativo' });
   if (multiplicador !== undefined && multiplicador !== null && !(Math.round(Number(multiplicador) * 1000) >= 1)) return res.status(400).json({ error: 'Las piezas deben ser mayores a cero (mínimo 0.001)' });
-  const { rows } = await pool.query(
-    `UPDATE opciones_modificador SET
-       nombre = COALESCE(NULLIF(TRIM($1::text), ''), nombre),
-       precio = COALESCE($2, precio),
-       multiplicador = COALESCE($3, multiplicador)
-     WHERE id = $4 RETURNING *`,
-    [nombre, precio, multiplicador, req.params.id]
-  );
-  if (!rows.length) return res.status(404).json({ error: 'Opción no encontrada' });
-  res.json(rows[0]);
+  // Las piezas que equivale una presentación son parte de la receta: se comparten con el gemelo. Nombre y precio no.
+  const compartir = multiplicador !== undefined && multiplicador !== null && !req.empleado?.sucursal_id && (await recetasCompartidas.activo(pool));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `UPDATE opciones_modificador SET
+         nombre = COALESCE(NULLIF(TRIM($1::text), ''), nombre),
+         precio = COALESCE($2, precio),
+         multiplicador = COALESCE($3, multiplicador)
+       WHERE id = $4 RETURNING *`,
+      [nombre, precio, multiplicador, req.params.id]
+    );
+    if (!rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Opción no encontrada' });
+    }
+    const compartido_con = compartir ? await recetasCompartidas.propagarMultiplicador(client, req.params.id, rows[0].multiplicador) : [];
+    await client.query('COMMIT');
+    res.json({ ...rows[0], compartido_con });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error actualizando la opción:', err);
+    res.status(500).json({ error: 'No se pudo guardar el cambio' });
+  } finally {
+    client.release();
+  }
 });
 
 app.delete('/api/opciones/:id', requierePuesto(), async (req, res) => {
@@ -713,22 +759,45 @@ app.post('/api/opciones/:id/insumos', requierePuesto(), async (req, res) => {
   if (Math.round(Number(cantidad) * 1000) < 1) {
     return res.status(400).json({ error: 'La cantidad mínima es 0.001 (1 gramo o 1 mililitro si el insumo está en kg o litros)' });
   }
-  const { rows } = await pool.query(
-    `INSERT INTO opcion_insumos (opcion_id, insumo_id, cantidad)
-     VALUES ($1,$2,$3)
-     ON CONFLICT (opcion_id, insumo_id) DO UPDATE SET cantidad = EXCLUDED.cantidad
-     RETURNING *`,
-    [req.params.id, insumo_id, cantidad]
-  );
-  res.json(rows[0]);
+  const compartir = !req.empleado?.sucursal_id && (await recetasCompartidas.activo(pool));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(
+      `INSERT INTO opcion_insumos (opcion_id, insumo_id, cantidad)
+       VALUES ($1,$2,$3)
+       ON CONFLICT (opcion_id, insumo_id) DO UPDATE SET cantidad = EXCLUDED.cantidad
+       RETURNING *`,
+      [req.params.id, insumo_id, cantidad]
+    );
+    const compartido_con = compartir ? await recetasCompartidas.propagarInsumoOpcion(client, req.params.id, insumo_id, cantidad) : [];
+    await client.query('COMMIT');
+    res.json({ ...rows[0], compartido_con });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error guardando insumo de la opción:', err);
+    res.status(500).json({ error: 'No se pudo guardar el insumo' });
+  } finally {
+    client.release();
+  }
 });
 
 app.delete('/api/opciones/:id/insumos/:insumoId', requierePuesto(), async (req, res) => {
-  await pool.query(
-    'DELETE FROM opcion_insumos WHERE opcion_id = $1 AND insumo_id = $2',
-    [req.params.id, req.params.insumoId]
-  );
-  res.json({ ok: true });
+  const compartir = !req.empleado?.sucursal_id && (await recetasCompartidas.activo(pool));
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM opcion_insumos WHERE opcion_id = $1 AND insumo_id = $2', [req.params.id, req.params.insumoId]);
+    const compartido_con = compartir ? await recetasCompartidas.propagarInsumoOpcion(client, req.params.id, Number(req.params.insumoId), null) : [];
+    await client.query('COMMIT');
+    res.json({ ok: true, compartido_con });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error quitando insumo de la opción:', err);
+    res.status(500).json({ error: 'No se pudo quitar el insumo' });
+  } finally {
+    client.release();
+  }
 });
 
 
@@ -3484,6 +3553,7 @@ app.post('/api/plan-compras', requierePuesto(), async (req, res) => {
 
 // Rutas del inventario avanzado (/api/inventario/...)
 inventario.registrarRutas(app, { requierePuesto, fechaNegocioSQL, fechaNegocioActualJS });
+recetasCompartidas.registrarRutas(app, { requierePuesto });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Servidor corriendo en puerto ${PORT}`));
