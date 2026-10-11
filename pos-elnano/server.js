@@ -507,6 +507,12 @@ app.post('/api/productos/:id/receta', requierePuesto(), async (req, res) => {
   if (!insumo_id || cantidad === undefined) {
     return res.status(400).json({ error: 'Falta el insumo o la cantidad' });
   }
+  if (!(Number(cantidad) > 0) || Number(cantidad) > 100000) {
+    return res.status(400).json({ error: 'La cantidad debe ser mayor a cero' });
+  }
+  if (Math.round(Number(cantidad) * 1000) < 1) {
+    return res.status(400).json({ error: 'La cantidad mínima es 0.001 (1 gramo o 1 mililitro si el insumo está en kg o litros)' });
+  }
   const { rows } = await pool.query(
     `INSERT INTO producto_insumos (producto_id, insumo_id, cantidad)
      VALUES ($1,$2,$3)
@@ -515,6 +521,95 @@ app.post('/api/productos/:id/receta', requierePuesto(), async (req, res) => {
     [req.params.id, insumo_id, cantidad]
   );
   res.json(rows[0]);
+});
+
+// Todo lo que necesita el editor de recetas en UNA llamada: receta base, grupos de variantes/extras,
+// sus opciones y los insumos extra de cada opción, todo con el costo actual de cada insumo.
+app.get('/api/productos/:id/receta-completa', requierePuesto(), async (req, res) => {
+  try {
+    const { rows: prod } = await pool.query(
+      `SELECT p.id, p.nombre, p.precio, p.sucursal_id, COALESCE(c.nombre, 'Sin categoría') AS categoria
+       FROM productos p LEFT JOIN categorias c ON c.id = p.categoria_id WHERE p.id = $1`,
+      [req.params.id]
+    );
+    if (!prod.length) return res.status(404).json({ error: 'Producto no encontrado' });
+    if (req.empleado?.sucursal_id && Number(req.empleado.sucursal_id) !== Number(prod[0].sucursal_id)) {
+      return res.status(403).json({ error: 'Ese producto es de otra sucursal' });
+    }
+    const [receta, grupos] = await Promise.all([
+      pool.query(
+        `SELECT pi.insumo_id, pi.cantidad, i.nombre, i.unidad, i.costo_unitario
+         FROM producto_insumos pi JOIN insumos i ON i.id = pi.insumo_id WHERE pi.producto_id = $1 ORDER BY pi.id`,
+        [req.params.id]
+      ),
+      pool.query('SELECT id, nombre, tipo, obligatorio FROM grupos_modificadores WHERE producto_id = $1 ORDER BY orden, id', [req.params.id]),
+    ]);
+    const grupoIds = grupos.rows.map((g) => g.id);
+    const { rows: opciones } = grupoIds.length
+      ? await pool.query('SELECT id, grupo_id, nombre, precio, multiplicador FROM opciones_modificador WHERE grupo_id = ANY($1) ORDER BY orden, id', [grupoIds])
+      : { rows: [] };
+    const opcionIds = opciones.map((o) => o.id);
+    const { rows: extras } = opcionIds.length
+      ? await pool.query(
+          `SELECT oi.opcion_id, oi.insumo_id, oi.cantidad, i.nombre, i.unidad, i.costo_unitario
+           FROM opcion_insumos oi JOIN insumos i ON i.id = oi.insumo_id WHERE oi.opcion_id = ANY($1) ORDER BY oi.id`,
+          [opcionIds]
+        )
+      : { rows: [] };
+    const insumo = (r) => ({ insumo_id: r.insumo_id, nombre: r.nombre, unidad: r.unidad, cantidad: Number(r.cantidad), costo_unitario: Number(r.costo_unitario) });
+    res.json({
+      producto: { id: prod[0].id, nombre: prod[0].nombre, precio: Number(prod[0].precio), categoria: prod[0].categoria, sucursal_id: prod[0].sucursal_id },
+      receta: receta.rows.map(insumo),
+      grupos: grupos.rows.map((g) => ({
+        id: g.id, nombre: g.nombre, tipo: g.tipo, obligatorio: g.obligatorio,
+        opciones: opciones.filter((o) => o.grupo_id === g.id).map((o) => ({
+          id: o.id, nombre: o.nombre, precio: Number(o.precio), multiplicador: Number(o.multiplicador) || 1,
+          insumos: extras.filter((x) => x.opcion_id === o.id).map(insumo),
+        })),
+      })),
+    });
+  } catch (err) {
+    console.error('Error en receta-completa:', err);
+    res.status(500).json({ error: 'No se pudo cargar la receta' });
+  }
+});
+
+// Copia la receta base de otro producto: "combinar" agrega lo que falta y actualiza las cantidades que coinciden;
+// "reemplazar" borra la receta actual y deja la del otro. Todo o nada.
+app.post('/api/productos/:id/receta/copiar', requierePuesto(), async (req, res) => {
+  const destino = Number(req.params.id);
+  const origen = Number(req.body.origen_id);
+  const modo = req.body.modo === 'reemplazar' ? 'reemplazar' : 'combinar';
+  if (!destino || !origen) return res.status(400).json({ error: 'Falta el producto del que se copia' });
+  if (destino === origen) return res.status(400).json({ error: 'Elige otro producto distinto' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: prods } = await client.query('SELECT id, sucursal_id FROM productos WHERE id = ANY($1)', [[destino, origen]]);
+    const pDestino = prods.find((p) => p.id === destino);
+    if (prods.length !== 2) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Producto no encontrado' }); }
+    if (req.empleado?.sucursal_id && Number(req.empleado.sucursal_id) !== Number(pDestino.sucursal_id)) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Ese producto es de otra sucursal' });
+    }
+    const { rows: origenRows } = await client.query('SELECT 1 FROM producto_insumos WHERE producto_id = $1 LIMIT 1', [origen]);
+    if (!origenRows.length) { await client.query('ROLLBACK'); return res.status(400).json({ error: 'Ese producto todavía no tiene receta para copiar' }); }
+    if (modo === 'reemplazar') await client.query('DELETE FROM producto_insumos WHERE producto_id = $1', [destino]);
+    const r = await client.query(
+      `INSERT INTO producto_insumos (producto_id, insumo_id, cantidad)
+       SELECT $1, insumo_id, cantidad FROM producto_insumos WHERE producto_id = $2
+       ON CONFLICT (producto_id, insumo_id) DO UPDATE SET cantidad = EXCLUDED.cantidad`,
+      [destino, origen]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, copiados: r.rowCount, modo });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Error copiando receta:', err);
+    res.status(500).json({ error: 'No se pudo copiar la receta' });
+  } finally {
+    client.release();
+  }
 });
 
 app.delete('/api/productos/:id/receta/:insumoId', requierePuesto(), async (req, res) => {
@@ -542,6 +637,8 @@ app.post('/api/productos/:id/grupos', requierePuesto(), async (req, res) => {
 
 app.patch('/api/grupos/:id', requierePuesto(), async (req, res) => {
   const { nombre, tipo, obligatorio } = req.body;
+  if (nombre !== undefined && !String(nombre).trim()) return res.status(400).json({ error: 'El grupo necesita un nombre' });
+  if (tipo !== undefined && tipo !== null && !['variante', 'extra'].includes(tipo)) return res.status(400).json({ error: 'Tipo de grupo no válido' });
   const { rows } = await pool.query(
     `UPDATE grupos_modificadores SET
        nombre = COALESCE($1, nombre),
@@ -575,9 +672,12 @@ app.post('/api/grupos/:id/opciones', requierePuesto(), async (req, res) => {
 
 app.patch('/api/opciones/:id', requierePuesto(), async (req, res) => {
   const { nombre, precio, multiplicador } = req.body;
+  if (nombre !== undefined && !String(nombre).trim()) return res.status(400).json({ error: 'La opción necesita un nombre' });
+  if (precio !== undefined && precio !== null && !(Number(precio) >= 0)) return res.status(400).json({ error: 'El precio no puede ser negativo' });
+  if (multiplicador !== undefined && multiplicador !== null && !(Math.round(Number(multiplicador) * 1000) >= 1)) return res.status(400).json({ error: 'Las piezas deben ser mayores a cero (mínimo 0.001)' });
   const { rows } = await pool.query(
     `UPDATE opciones_modificador SET
-       nombre = COALESCE($1, nombre),
+       nombre = COALESCE(NULLIF(TRIM($1::text), ''), nombre),
        precio = COALESCE($2, precio),
        multiplicador = COALESCE($3, multiplicador)
      WHERE id = $4 RETURNING *`,
@@ -606,6 +706,12 @@ app.post('/api/opciones/:id/insumos', requierePuesto(), async (req, res) => {
   const { insumo_id, cantidad } = req.body;
   if (!insumo_id || cantidad === undefined) {
     return res.status(400).json({ error: 'Falta el insumo o la cantidad' });
+  }
+  if (!(Number(cantidad) > 0) || Number(cantidad) > 100000) {
+    return res.status(400).json({ error: 'La cantidad debe ser mayor a cero' });
+  }
+  if (Math.round(Number(cantidad) * 1000) < 1) {
+    return res.status(400).json({ error: 'La cantidad mínima es 0.001 (1 gramo o 1 mililitro si el insumo está en kg o litros)' });
   }
   const { rows } = await pool.query(
     `INSERT INTO opcion_insumos (opcion_id, insumo_id, cantidad)

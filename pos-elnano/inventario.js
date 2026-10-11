@@ -775,6 +775,7 @@ module.exports = function crearInventario({ pool }) {
         res.json({ ok: true, id: recetaId, insumo_id: insumoId });
       } catch (e) {
         await client.query('ROLLBACK');
+        if (e.code === '23505') return err400(res, 'Ya existe un insumo con ese nombre: elígelo de la lista o ponle otro nombre');
         throw e;
       } finally {
         client.release();
