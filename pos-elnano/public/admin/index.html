@@ -237,6 +237,93 @@
   body.dark .dash-metricas button, body.dark .chip-fecha-dash { background: #1e1e1e; color: #eee; border-color: #444; }
   body.dark .dash-metricas button.activo, body.dark .chip-fecha-dash.activo { background: #b8232f; border-color: #b8232f; }
 
+  /* ---- Editor de recetas ---- */
+  #overlay-receta { z-index: 240; }
+  .rec-nav { background: rgba(255,255,255,.15); border: none; color: white; width: 38px; height: 38px; border-radius: 8px; font-size: 24px; line-height: 1; cursor: pointer; padding: 0; }
+  .rec-nav:disabled { opacity: .3; cursor: default; }
+  .rec-estado { font-size: 12px; opacity: .95; white-space: nowrap; min-width: 0; }
+  .rec-resumen { flex-shrink: 0; position: sticky; top: 0; z-index: 6; background: #fff; border-bottom: 1px solid #e6e6e6; padding: 8px max(14px, calc((100% - 736px) / 2)) 10px; box-shadow: 0 2px 6px rgba(0,0,0,.05); }
+  .rec-cuerpo { flex-shrink: 0; padding: 12px; max-width: 760px; width: 100%; margin: 0 auto; box-sizing: border-box; }
+  .rec-detalle { flex-shrink: 0; max-width: 760px; width: 100%; margin: 0 auto; box-sizing: border-box; padding: 12px 12px 0; }
+  .rec-detalle:empty { display: none; }
+  .rec-detalle .rec-seccion { margin-bottom: 0; padding: 10px 12px; }
+  .rec-detalle .rec-pista:first-child { margin-top: 0; }
+  .rec-top { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .rec-nombre { font-size: 17px; font-weight: 800; }
+  .rec-cat { font-size: 12px; color: #888; }
+  .rec-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+  .rec-stat { background: #f5f5f5; border-radius: 10px; padding: 6px 10px; min-width: 0; }
+  .rec-stat .et { font-size: 10.5px; text-transform: uppercase; letter-spacing: .4px; color: #888; }
+  .rec-stat .val { font-size: 18px; font-weight: 800; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rec-medidor { height: 6px; background: #eee; border-radius: 3px; margin-top: 8px; overflow: hidden; }
+  .rec-medidor > i { display: block; height: 100%; border-radius: 4px; transition: width .25s, background .25s; }
+  .rec-pista { font-size: 12.5px; margin-top: 7px; line-height: 1.45; color: #555; }
+  .rec-tabla { margin-top: 9px; display: grid; grid-template-columns: 1fr auto auto auto; gap: 3px 14px; font-size: 13px; align-items: baseline; }
+  .rec-tabla .h { font-size: 10.5px; text-transform: uppercase; color: #999; letter-spacing: .3px; text-align: right; }
+  .rec-tabla .h:first-child { text-align: left; }
+  .rec-tabla .n { text-align: right; font-weight: 700; white-space: nowrap; }
+  .rec-seccion { background: #fff; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
+  .rec-seccion h3 { margin: 0 0 2px; font-size: 15px; }
+  .rec-seccion .sub { font-size: 12px; color: #888; margin-bottom: 6px; line-height: 1.45; }
+  .rec-fila { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; padding: 10px 0; border-bottom: 1px solid #f0f0f0; align-items: center; }
+  .rec-fila .nombre { font-weight: 700; font-size: 14px; }
+  .rec-fila .det { font-size: 11.5px; color: #999; }
+  .rec-cant { display: flex; align-items: center; gap: 6px; }
+  .rec-cant input { width: 92px; padding: 8px; border-radius: 8px; border: 1px solid #ddd; font-size: 15px; text-align: right; font-family: inherit; background: #fff; color: inherit; box-sizing: border-box; }
+  .rec-cant input:focus, .rec-op-top input:focus, .rec-grupo-top input.nombre:focus { outline: 2px solid #b8232f; border-color: transparent; }
+  .rec-cant input.invalido { border-color: #b8232f; background: #fff1f1; }
+  .rec-costo { text-align: right; font-weight: 800; font-size: 14px; }
+  .rec-costo small { display: block; font-weight: 600; color: #999; font-size: 11px; }
+  .rec-quitar { background: none; border: none; color: #b8232f; font-size: 17px; cursor: pointer; padding: 6px 10px; border-radius: 8px; justify-self: end; font-family: inherit; }
+  .rec-quitar:active { background: #fdecee; }
+  .rec-barra { grid-column: 1 / -1; height: 5px; background: #f0f0f0; border-radius: 3px; overflow: hidden; }
+  .rec-barra > i { display: block; height: 100%; background: #d9a441; border-radius: 3px; transition: width .25s; }
+  .rec-sincosto { display: inline-block; font-size: 10.5px; font-weight: 700; color: #9a6a00; background: #fff3cd; border-radius: 8px; padding: 1px 8px; margin-left: 6px; cursor: pointer; }
+  .rec-vacio { text-align: center; color: #999; font-size: 13px; padding: 14px 8px; line-height: 1.5; }
+  .rec-grupo { border: 1px solid #ececec; border-radius: 12px; padding: 10px; margin-top: 10px; }
+  .rec-grupo-top { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .rec-grupo-top .rec-seg { width: 100%; display: flex; }
+  .rec-grupo-top .rec-seg button { flex: 1; padding: 8px 11px; }
+  .rec-grupo-top input.nombre { flex: 1; min-width: 0; font-weight: 800; font-size: 15px; padding: 7px 9px; border: 1px solid transparent; border-radius: 8px; background: #f5f5f5; color: inherit; font-family: inherit; }
+  .rec-sec-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .rec-sec-top h3 { margin: 0; }
+  .rec-seg { display: inline-flex; border: 1px solid #ddd; border-radius: 10px; overflow: hidden; }
+  .rec-seg button { border: none; background: #fff; padding: 7px 11px; font-size: 12px; font-weight: 700; cursor: pointer; color: #666; font-family: inherit; }
+  .rec-seg button.activo { background: #b8232f; color: #fff; }
+  .rec-opcion { background: #fafafa; border-radius: 10px; padding: 10px; margin-top: 8px; }
+  .rec-op-top { display: flex; gap: 6px; align-items: center; }
+  .rec-op-top input { padding: 8px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; font-family: inherit; background: #fff; color: inherit; box-sizing: border-box; min-width: 0; }
+  .rec-op-mult { margin-top: 8px; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+  .rec-op-hint { font-size: 11.5px; color: #999; margin-top: 3px; line-height: 1.4; }
+  .rec-op-mult input { width: 62px; text-align: center; padding: 7px; border: 1px solid #ddd; border-radius: 8px; font-family: inherit; font-size: 14px; background: #fff; color: inherit; }
+  .rec-pildoras { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; font-size: 12.5px; }
+  .rec-pildora { background: #fff; border: 1px solid #e5e5e5; border-radius: 12px; padding: 3px 10px; font-weight: 700; }
+  .rec-op-insumos { margin-top: 8px; border-top: 1px dashed #ddd; padding-top: 6px; }
+  .rec-op-insumos .rec-fila { padding: 7px 0; }
+  .rec-ayuda { background: #f1f6ff; border-radius: 10px; padding: 10px 12px; font-size: 12.5px; line-height: 1.55; color: #35507a; margin-top: 8px; }
+  .rec-ayuda b { color: #1f3a66; }
+  .rec-lista { max-height: 42vh; overflow-y: auto; margin: 8px 0; }
+  .rec-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 10px; border-radius: 10px; cursor: pointer; }
+  .rec-item:active { background: #f3f3f3; }
+  .rec-item .n { font-weight: 700; font-size: 14px; }
+  .rec-item .s { font-size: 11.5px; color: #999; }
+  .rec-item.usado { opacity: .5; }
+  .rec-flash { animation: recFlash 1.4s ease-out; }
+  @keyframes recFlash { 0% { background: #fff0b3; } 100% { background: transparent; } }
+  .rec-add { width: 100%; margin-top: 10px; padding: 12px; border: 2px dashed #cfcfcf; border-radius: 12px; background: none; font-size: 14px; font-weight: 700; color: #b8232f; cursor: pointer; font-family: inherit; }
+  .rec-add:active { background: #fdf1f1; }
+  .rec-nueva-op { display: flex; gap: 6px; margin-top: 8px; align-items: center; flex-wrap: wrap; }
+  .rec-nueva-op input { padding: 8px; border: 1px dashed #bbb; border-radius: 8px; font-size: 14px; font-family: inherit; background: #fff; color: inherit; min-width: 0; box-sizing: border-box; }
+  body.dark .rec-resumen, body.dark .rec-seccion { background: #1e1e1e; color: #eee; border-color: #333; }
+  body.dark .rec-stat { background: #2a2a2a; } body.dark .rec-medidor, body.dark .rec-barra { background: #333; }
+  body.dark .rec-fila { border-color: #2a2a2a; } body.dark .rec-pista { color: #bbb; }
+  body.dark .rec-cant input, body.dark .rec-op-top input, body.dark .rec-op-mult input, body.dark .rec-nueva-op input { background: #2a2a2a; color: #eee; border-color: #444; }
+  body.dark .rec-grupo { border-color: #333; } body.dark .rec-opcion { background: #252525; }
+  body.dark .rec-grupo-top input.nombre { background: #2a2a2a; }
+  body.dark .rec-seg { border-color: #444; } body.dark .rec-seg button { background: #2a2a2a; color: #ccc; } body.dark .rec-seg button.activo { background: #b8232f; color: #fff; }
+  body.dark .rec-pildora { background: #2a2a2a; border-color: #444; } body.dark .rec-ayuda { background: #1c2a3f; color: #a9c4ee; }
+  body.dark .rec-item:active { background: #2a2a2a; } body.dark .rec-add { border-color: #444; }
+
   /* ---- Inventario ---- */
   .admin-tile { position: relative; }
 
@@ -466,6 +553,7 @@
   <button class="admin-tile" id="btn-abrir-dashboard"><span class="emoji">📊</span><span class="nombre">Dashboard</span></button>
   <button class="admin-tile" id="btn-abrir-inventario"><span class="emoji">📦</span><span class="nombre">Inventario</span><span class="inv-badge" id="inv-badge" style="display:none"></span></button>
   <button class="admin-tile" id="btn-abrir-menu-admin"><span class="emoji">🍽️</span><span class="nombre">Menú</span></button>
+  <button class="admin-tile" id="btn-abrir-recetas"><span class="emoji">🧾</span><span class="nombre">Recetas</span></button>
   <button class="admin-tile" id="btn-abrir-conteo" style="display:none"><span class="emoji">📦</span><span class="nombre">Conteo de inventario</span></button>
   <button class="admin-tile" id="btn-abrir-compra-registro" style="display:none"><span class="emoji">📷</span><span class="nombre">Registrar compra</span></button>
   <button class="admin-tile" id="btn-abrir-compras" style="display:none"><span class="emoji">🛒</span><span class="nombre">Planeación de compras</span></button>
@@ -700,6 +788,20 @@
     <div id="pf-import-status" style="font-size:12px;margin-top:6px"></div>
   </div>
   <div id="pf-categorias" style="padding:0 0 24px"></div>
+</div>
+
+<!-- Editor de recetas -->
+<div class="full-overlay" id="overlay-receta">
+  <div class="full-overlay-header">
+    <button id="btn-cerrar-receta">✕</button>
+    <span class="titulo" id="receta-titulo">Receta</span>
+    <span class="rec-estado" id="receta-estado"></span>
+    <button class="rec-nav" id="receta-prev" title="Platillo anterior">‹</button>
+    <button class="rec-nav" id="receta-next" title="Platillo siguiente">›</button>
+  </div>
+  <div class="rec-resumen" id="receta-resumen"></div>
+  <div class="rec-detalle" id="receta-detalle"></div>
+  <div class="rec-cuerpo" id="receta-cuerpo"></div>
 </div>
 
 <!-- Inventario -->
@@ -978,5 +1080,6 @@
 <script src="temporada.js"></script>
 <script src="app.js"></script>
 <script src="inventario.js"></script>
+<script src="recetas.js"></script>
 </body>
 </html>
