@@ -143,6 +143,7 @@ function invPintarTabs() {
 }
 
 async function invIrA(tab) {
+  INV.enSync = false;
   INV.tab = tab;
   const mi = ++INV.token;
   invPintarTabs();
@@ -1141,6 +1142,7 @@ INV_RENDER.recetas = async (mi) => {
     <div class="inv-chips">
       ${[['categoria', 'Por categoría'], ['caro', 'Food cost más alto'], ['margen', 'Menor margen']].map(([k, et]) => `<button class="inv-chip ${INV_REC.orden === k ? 'activo' : ''}" data-acc="rec-orden" data-orden="${k}">${et}</button>`).join('')}
       <button class="inv-chip" data-acc="reintentar">↻ Actualizar</button>
+      ${state.sucursales.length > 1 ? '<button class="inv-chip" data-acc="rec-sync">🔄 Recetas entre sucursales</button>' : ''}
     </div>
     <div class="inv-card" style="padding:4px 12px">
       ${lista.map((f) => `<div class="inv-fila"><div class="cuerpo">
@@ -1153,6 +1155,118 @@ INV_RENDER.recetas = async (mi) => {
 };
 INV_ACC['rec-orden'] = (el) => { INV_REC.orden = el.dataset.orden; invIrA('recetas'); };
 INV_ACC['editar-receta'] = (el) => abrirModalReceta(Number(el.dataset.id));
+
+
+// ==================== RECETAS ENTRE SUCURSALES ====================
+// Compara los platillos de esta sucursal con los de otra (se emparejan por nombre) y permite igualarlos en bloque.
+const INV_SYNC = { contra: null };
+const INV_SYNC_ESTADO = {
+  igual: ['✅', 'Igual', 'est-ok'], distinta: ['⚠️', 'Distinta', 'est-bajo'], falta_aqui: ['📥', 'Falta aquí', 'est-bajo'],
+  falta_alla: ['📤', 'Falta allá', 'est-bajo'], ambas_vacias: ['➖', 'Sin receta en ninguna', ''], sin_gemelo: ['🏪', 'Solo en esta sucursal', ''],
+};
+INV_ACC['rec-sync'] = () => invPintarSync();
+INV_ACC['sync-contra'] = (el) => { INV_SYNC.contra = el.dataset.id; invPintarSync(); };
+INV_ACC['sync-abrir'] = (el) => abrirModalReceta(Number(el.dataset.id));
+
+async function invPintarSync() {
+  const otras = state.sucursales.filter((s) => String(s.id) !== String(invSuc()));
+  if (!otras.length) return invAviso('No hay otra sucursal con la cual comparar.', true);
+  if (!INV_SYNC.contra || !otras.some((s) => String(s.id) === String(INV_SYNC.contra))) INV_SYNC.contra = otras[0].id;
+  INV.enSync = true;
+  invVista('Recetas entre sucursales', '<div class="inv-vacio">Comparando…</div>');
+  const [c, cfg] = await Promise.all([
+    invApi('GET', `/api/recetas/comparacion?sucursal_id=${invSuc()}&contra_sucursal_id=${INV_SYNC.contra}`),
+    invApi('GET', '/api/recetas/compartidas'),
+  ]);
+  if (!INV.enSync) return; // se salió de esta vista mientras cargaba
+  if (!c.ok) return invError(c);
+  const d = c.d;
+  const rs = d.resumen;
+  const puede = cfg.ok && cfg.d.puede_cambiar;
+  const aqui = d.sucursal.nombre;
+  const alla = d.contra.nombre;
+  const hayCopiables = d.filas.some((f) => f.gemelo_id && f.ingredientes_alla > 0 && ['falta_aqui', 'distinta'].includes(f.estado));
+  const boton = (acc, texto, n, primario) => `<button class="inv-btn ${primario ? 'primario' : ''}" data-acc="${acc}" ${n ? '' : 'disabled'}>${texto}${n ? ` (${n})` : ''}</button>`;
+  const traibles = d.filas.filter((f) => f.gemelo_id && f.ingredientes_alla > 0);
+  const nTraerFaltan = traibles.filter((f) => f.estado === 'falta_aqui').length;
+  const nTraerTodas = traibles.filter((f) => ['falta_aqui', 'distinta'].includes(f.estado)).length;
+  const nMandarFaltan = rs.faltan_alla;
+  const nMandarTodas = rs.faltan_alla + rs.distintas;
+
+  invVista('Recetas entre sucursales', `
+    ${otras.length > 1 ? `<div class="inv-chips">${otras.map((s) => `<button class="inv-chip ${String(INV_SYNC.contra) === String(s.id) ? 'activo' : ''}" data-acc="sync-contra" data-id="${s.id}">Comparar con ${invEsc(s.nombre)}</button>`).join('')}</div>` : ''}
+    <div class="inv-card">
+      <div style="font-size:13px;line-height:1.5">Compara los platillos de <b>${invEsc(aqui)}</b> con los de <b>${invEsc(alla)}</b>. Un platillo es el mismo si se llama igual (sin importar mayúsculas ni acentos). Se comparan los ingredientes, las piezas de cada presentación y los insumos de los extras; <b>precios y nombres no cambian nunca</b>.</div>
+      <div class="inv-kpis" style="margin-top:10px">
+        <div class="inv-kpi"><div class="et">Iguales</div><div class="val inv-pos">${rs.iguales}</div></div>
+        <div class="inv-kpi"><div class="et">Distintas</div><div class="val ${rs.distintas ? 'inv-neg' : ''}">${rs.distintas}</div></div>
+        <div class="inv-kpi"><div class="et">Faltan aquí</div><div class="val ${rs.faltan_aqui ? 'inv-neg' : ''}">${rs.faltan_aqui}</div></div>
+        <div class="inv-kpi"><div class="et">Faltan allá</div><div class="val ${rs.faltan_alla ? 'inv-neg' : ''}">${rs.faltan_alla}</div></div>
+      </div>
+    </div>
+
+    ${puede
+      ? `<div class="inv-card"><h3>Igualar en bloque</h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            ${boton('sync-traer-faltan', `📥 Traer de ${invEsc(alla)} lo que me falta`, nTraerFaltan, true)}
+            ${boton('sync-traer-todas', `📥 Igualar con ${invEsc(alla)} (reemplaza también las distintas)`, nTraerTodas)}
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            ${boton('sync-mandar-faltan', `📤 Mandar a ${invEsc(alla)} lo que le falta`, nMandarFaltan)}
+            ${boton('sync-mandar-todas', `📤 Igualar ${invEsc(alla)} con la mía (reemplaza también las distintas)`, nMandarTodas)}
+          </div>
+          <div class="inv-sub" style="margin-top:8px">«Lo que falta» solo llena los platillos que todavía no tienen receta; no toca los que ya tienen una. Nunca se reemplaza una receta con una vacía.</div>
+        </div>
+        <div class="inv-card" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+          <div><div style="font-weight:700;font-size:14px">Compartir los cambios automáticamente</div><div class="inv-sub">Si está en «Sí», cada ingrediente que guardes en una receta se aplica también al mismo platillo de la otra sucursal.${cfg.d.migrado === false ? ' <b class="inv-neg">Falta correr db/migracion-recetas-compartidas.sql.</b>' : ''}</div></div>
+          <div class="rec-seg"><button class="${cfg.d.activo ? 'activo' : ''}" data-acc="sync-compartir" data-v="1">Sí</button><button class="${!cfg.d.activo ? 'activo' : ''}" data-acc="sync-compartir" data-v="0">No</button></div>
+        </div>`
+      : '<div class="inv-aviso">Tu acceso es de una sola sucursal: puedes ver la comparación y copiar receta por receta desde el editor, pero no igualar en bloque ni cambiar la otra sucursal.</div>'}
+
+    <div class="inv-card" style="padding:4px 12px"><h3 style="padding-top:10px">Platillo por platillo</h3>
+      ${d.filas.map((f) => {
+        const [em, et, cl] = INV_SYNC_ESTADO[f.estado];
+        return `<div class="inv-fila"><div class="cuerpo"><div class="nombre">${invEsc(f.nombre)} <span class="inv-estado ${cl}" style="${cl ? '' : 'background:#eee;color:#777'}">${em} ${et}</span></div>
+          <div class="detalle">${invEsc(f.categoria)} · ${f.ingredientes_aqui} ingrediente${f.ingredientes_aqui === 1 ? '' : 's'} aquí${f.gemelo_id ? ` · ${f.ingredientes_alla} en ${invEsc(alla)}` : ''}</div></div>
+          <button class="inv-btn chico" data-acc="sync-abrir" data-id="${f.producto_id}">${f.estado === 'igual' ? 'Ver' : 'Abrir'}</button></div>`;
+      }).join('') || '<div class="inv-vacio">No hay platillos en esta sucursal.</div>'}
+    </div>
+    ${d.solo_alla.length ? `<div class="inv-sub" style="margin-top:8px">🏪 Solo existen en ${invEsc(alla)} (no tienen platillo con el mismo nombre aquí): ${d.solo_alla.map(invEsc).join(', ')}.</div>` : ''}`);
+}
+
+async function invSyncEjecutar(desdeId, haciaId, modo, nombreDestino) {
+  const r = await invApi('POST', '/api/recetas/sincronizar', { desde_sucursal_id: Number(desdeId), hacia_sucursal_id: Number(haciaId), modo });
+  invCerrarModal();
+  if (!r.ok) return invAviso(r.d.error || 'No se pudo sincronizar.', true);
+  const extra = r.d.opciones_sin_pareja ? ` (${r.d.opciones_sin_pareja} opciones no existen con ese nombre en el otro lado)` : '';
+  invAviso(r.d.platillos ? `Listo: ${r.d.platillos} receta${r.d.platillos === 1 ? '' : 's'} copiada${r.d.platillos === 1 ? '' : 's'} a ${nombreDestino}${extra}.` : 'No había nada que copiar.');
+  invPintarSync();
+}
+function invConfirmarSync(acc) {
+  const otras = state.sucursales.find((s) => String(s.id) === String(INV_SYNC.contra));
+  const aqui = state.sucursales.find((s) => String(s.id) === String(invSuc()));
+  const traer = acc.startsWith('sync-traer');
+  const todas = acc.endsWith('todas');
+  const desde = traer ? otras : aqui;
+  const hacia = traer ? aqui : otras;
+  const ejecutar = () => invSyncEjecutar(desde.id, hacia.id, todas ? 'todas' : 'faltantes', hacia.nombre);
+  if (!todas) return ejecutar(); // solo llena platillos vacíos: no hay nada que perder
+  invModal(`
+    <h3 style="margin:0 0 6px">Igualar las recetas de ${invEsc(hacia.nombre)} con las de ${invEsc(desde.nombre)}</h3>
+    <div class="inv-sub">Además de llenar los platillos vacíos, <b>se reemplazan</b> las recetas de ${invEsc(hacia.nombre)} que sean distintas por las de ${invEsc(desde.nombre)}. Precios y nombres no cambian. No se puede deshacer.</div>
+    <div class="modal-botones"><button class="btn-cancelar" id="sy-no">Cancelar</button><button class="btn-agregar" id="sy-si">Sí, igualar</button></div>`,
+  () => {
+    document.getElementById('sy-no').addEventListener('click', invCerrarModal);
+    document.getElementById('sy-si').addEventListener('click', ejecutar);
+  });
+}
+['sync-traer-faltan', 'sync-traer-todas', 'sync-mandar-faltan', 'sync-mandar-todas'].forEach((a) => (INV_ACC[a] = () => invConfirmarSync(a)));
+INV_ACC['sync-compartir'] = async (el) => {
+  const r = await invApi('PUT', '/api/recetas/compartidas', { activo: el.dataset.v === '1' });
+  if (!r.ok) return invAviso(r.d.error || 'No se pudo cambiar.', true);
+  invAviso(r.d.activo ? 'Los cambios de recetas se aplican en las dos sucursales.' : 'Cada sucursal edita su receta por separado.');
+  invPintarSync();
+};
 
 // ==================== PROVEEDORES ====================
 INV_RENDER.proveedores = async (mi) => {

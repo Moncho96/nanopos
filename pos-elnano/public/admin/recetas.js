@@ -64,7 +64,8 @@ function recEstado(tipo, texto) {
   clearTimeout(REC.timerOk);
   if (tipo === 'guardando') el.textContent = 'Guardando…';
   else if (tipo === 'ok') {
-    el.textContent = '✓ Guardado';
+    // `texto` = sucursales donde el mismo cambio también se aplicó (recetas compartidas)
+    el.textContent = Array.isArray(texto) && texto.length ? `✓ Guardado · ${texto.length + 1} sucursales` : '✓ Guardado';
     REC.timerOk = setTimeout(() => { if (!REC.guardando) el.textContent = ''; }, 2200);
   } else el.textContent = '⚠️ ' + texto;
 }
@@ -76,7 +77,8 @@ async function recGuardar(promesa) {
   const r = await promesa;
   REC.guardando--;
   if (r.ok) {
-    if (!REC.guardando) recEstado('ok');
+    if (!REC.guardando) recEstado('ok', r.d?.compartido_con);
+    recRefrescarGemelos(); // si se comparte, el aviso de «igual a la otra sucursal» se actualiza solo
     return r;
   }
   recEstado('error', 'No se guardó');
@@ -110,11 +112,13 @@ function recCerrarModal() {
 
 // ---------- Carga ----------
 async function recCargarDatos(productoId) {
-  const [rc, ins] = await Promise.all([
+  const [rc, ins, gem] = await Promise.all([
     recApi('GET', `/api/productos/${productoId}/receta-completa`),
     recApi('GET', `/api/insumos?sucursal_id=${recSuc()}`),
+    recApi('GET', `/api/productos/${productoId}/gemelos`),
   ]);
   if (!rc.ok) return { error: rc.d?.error || 'No se pudo cargar la receta' };
+  REC.gem = gem.ok ? gem.d : null;
   const d = rc.d;
   // Copias "guardadas": permiten revertir un campo si el servidor no aceptó el cambio
   d.receta.forEach((r) => (r._g = r.cantidad));
@@ -162,7 +166,7 @@ async function recCerrar() {
   const inicio = Date.now();
   while (REC.guardando > 0 && Date.now() - inicio < 4000) await new Promise((fin) => setTimeout(fin, 60));
   await recargarCategoriasYProductos(); // el menú puede haber cambiado (variantes, precios de opciones)
-  if (typeof invAbierto === 'function' && invAbierto() && INV.tab === 'recetas') invIrA('recetas'); // refresca los costos del inventario
+  if (typeof invAbierto === 'function' && invAbierto() && INV.tab === 'recetas') { if (INV.enSync) invPintarSync(); else invIrA('recetas'); } // refresca los costos del inventario
 }
 document.getElementById('btn-cerrar-receta').addEventListener('click', recCerrar);
 
@@ -318,6 +322,7 @@ function recPintarCuerpo() {
     <div class="rec-seccion">
       <div class="rec-sec-top"><h3>🥣 Ingredientes</h3>
         <div class="rec-seg" title="Cómo ver las cantidades"><button class="${REC.gramos ? 'activo' : ''}" data-r-acc="unidades" data-g="1">g · ml</button><button class="${!REC.gramos ? 'activo' : ''}" data-r-acc="unidades" data-g="0">kg · l</button></div></div>
+      <div id="rec-gemelos">${recHtmlGemelos()}</div>
       <div class="sub">Lo que se gasta por <b>cada pieza</b> (o unidad) de este platillo. Cambia la cantidad directo y se guarda sola.</div>
       <div id="rec-filas-base">${d.receta.map((r) => recFila('base', r, base)).join('') || '<div class="rec-vacio">Este platillo todavía no tiene receta.<br>Agrega lo que lleva para saber cuánto te cuesta y para que descuente del inventario.</div>'}</div>
       <button class="rec-add" data-r-acc="picker-base">＋ Agregar ingrediente</button>
@@ -742,6 +747,101 @@ async function recEjecutarCopia(origen, modo) {
   if (carga.ok) recPintarTodo();
   recToast(`Receta copiada de «${origen.nombre}» (${r.d.copiados} ingrediente${r.d.copiados === 1 ? '' : 's'})`);
 }
+
+// ---------- Mismo platillo en la otra sucursal ----------
+// Cada sucursal tiene su menú; el mismo platillo se reconoce por su nombre. Aquí se ve cómo está su receta allá y se
+// puede copiar de/hacia la otra sucursal. Si «compartir» está encendido, cada cambio se aplica en las dos.
+function recHtmlGemelos() {
+  const g = REC.gem;
+  if (!g) return '';
+  if (!g.gemelos.length) {
+    return g.otras_sucursales > 0
+      ? '<div class="rec-gem neutro">🏪 No hay un platillo con este mismo nombre en la otra sucursal, así que esta receta es solo de aquí.</div>'
+      : '';
+  }
+  const tarjetas = g.gemelos.map((x) => {
+    const s = recEsc(x.sucursal_nombre);
+    const traer = `<button class="inv-btn chico" data-r-acc="gemelo-traer" data-gid="${x.producto_id}">📥 Copiar la de ${s} aquí</button>`;
+    const mandar = g.puede_cambiar ? `<button class="inv-btn chico" data-r-acc="gemelo-mandar" data-gid="${x.producto_id}">📤 Mandar esta a ${s}</button>` : '';
+    if (x.estado === 'igual') {
+      return `<div class="rec-gem ok">🔗 <b>Igual a la receta de ${s}.</b> ${g.activo && g.puede_cambiar ? 'Lo que cambies aquí también se cambia allá.' : 'Los cambios que hagas aquí solo afectan a esta sucursal.'}</div>`;
+    }
+    if (x.estado === 'ambas_vacias') {
+      return `<div class="rec-gem neutro">🔗 Es el mismo platillo que en ${s} y ninguno tiene receta todavía. ${g.activo && g.puede_cambiar ? 'Cuando armes la de aquí, se aplicará también allá.' : ''}</div>`;
+    }
+    if (x.estado === 'falta_aqui') {
+      return `<div class="rec-gem aviso">📥 <b>${s} ya tiene receta de este platillo</b> (${x.ingredientes} ingrediente${x.ingredientes === 1 ? '' : 's'}). Puedes copiarla en vez de registrarla otra vez.<div class="acc">${traer}</div></div>`;
+    }
+    if (x.estado === 'falta_alla') {
+      return `<div class="rec-gem aviso">📤 <b>${s} todavía no tiene receta de este platillo.</b>${g.puede_cambiar ? '<div class="acc">' + mandar + '</div>' : ''}</div>`;
+    }
+    return `<div class="rec-gem aviso">⚠️ <b>La receta de ${s} es distinta</b> (allá tiene ${x.ingredientes} ingrediente${x.ingredientes === 1 ? '' : 's'}).<div class="acc">${traer}${mandar}</div></div>`;
+  }).join('');
+  let control = '';
+  if (!g.puede_cambiar) control = '<div class="rec-gem neutro">Tu acceso es de una sola sucursal: lo que cambies aquí no se aplica en la otra.</div>';
+  else if (!g.migrado) control = '<div class="rec-gem aviso">Para que los cambios se apliquen en las dos sucursales falta correr <b>db/migracion-recetas-compartidas.sql</b> en la base de datos. Mientras tanto puedes copiar la receta con los botones de arriba.</div>';
+  else control = `<div class="rec-compartir"><span>Aplicar mis cambios también en la otra sucursal</span><div class="rec-seg"><button class="${g.activo ? 'activo' : ''}" data-r-acc="compartir" data-v="1">Sí</button><button class="${!g.activo ? 'activo' : ''}" data-r-acc="compartir" data-v="0">No</button></div></div>`;
+  return tarjetas + control;
+}
+function recPintarGemelos() {
+  const el = document.getElementById('rec-gemelos');
+  if (el) el.innerHTML = recHtmlGemelos();
+}
+let recTimerGem = null;
+function recRefrescarGemelos(ya) {
+  clearTimeout(recTimerGem);
+  recTimerGem = setTimeout(async () => {
+    if (!recAbierto() || !REC.gem) return;
+    const mi = REC.token;
+    const r = await recApi('GET', `/api/productos/${REC.id}/gemelos`);
+    if (mi !== REC.token || !r.ok) return;
+    REC.gem = r.d;
+    recPintarGemelos();
+  }, ya ? 0 : 600);
+}
+
+REC_ACC.compartir = async (el) => {
+  const activo = el.dataset.v === '1';
+  if (REC.gem.activo === activo) return;
+  const r = await recGuardar(recApi('PUT', '/api/recetas/compartidas', { activo }));
+  if (!r) return;
+  REC.gem.activo = activo;
+  recPintarGemelos();
+  recToast(activo ? 'Listo: los cambios de recetas se aplican en las dos sucursales' : 'Listo: cada sucursal edita su receta por separado');
+};
+
+function recConfirmarCopia(direccion, gid) {
+  const x = REC.gem.gemelos.find((y) => y.producto_id === Number(gid));
+  const s = recEsc(x.sucursal_nombre);
+  const aqui = REC.d.receta.length;
+  const traer = direccion === 'traer';
+  const ejecutar = () => recEjecutarCopiaGemelo(direccion, x);
+  // Si el destino no tiene nada que perder, se copia directo
+  if ((traer && aqui === 0) || (!traer && x.ingredientes === 0)) return ejecutar();
+  const pierde = traer ? `${aqui} ingrediente${aqui === 1 ? '' : 's'} de este platillo` : `${x.ingredientes} ingrediente${x.ingredientes === 1 ? '' : 's'} de ${s}`;
+  recModal(`
+    <h3 style="margin:0 0 6px">${traer ? `Copiar la receta de ${s}` : `Mandar la receta a ${s}`}</h3>
+    <div class="inv-sub">${traer ? `La receta de este platillo (${aqui} ingredientes) se <b>reemplaza</b> con la de ${s}.` : `La receta de ${s} (${x.ingredientes} ingredientes) se <b>reemplaza</b> con la de aquí.`}
+      Se copian los ingredientes, las piezas de cada presentación y los insumos de los extras. <b>Precios y nombres no cambian.</b></div>
+    <div class="rec-gem aviso" style="margin-top:10px">Se pierden ${pierde}. No se puede deshacer.</div>
+    <div class="modal-botones"><button class="btn-cancelar" id="rcg-no">Cancelar</button><button class="btn-agregar" id="rcg-si">${traer ? 'Copiar aquí' : 'Mandar'}</button></div>`,
+  () => {
+    document.getElementById('rcg-no').addEventListener('click', recCerrarModal);
+    document.getElementById('rcg-si').addEventListener('click', () => { recCerrarModal(); ejecutar(); });
+  });
+}
+async function recEjecutarCopiaGemelo(direccion, x) {
+  const r = await recGuardar(recApi('POST', `/api/productos/${REC.id}/receta/copiar-gemelo`, { gemelo_id: x.producto_id, direccion }));
+  if (!r) return;
+  const carga = await recCargarDatos(REC.id);
+  if (carga.ok) recPintarTodo();
+  const aviso = r.d.sin_pareja ? ` · ${r.d.sin_pareja} opción${r.d.sin_pareja === 1 ? '' : 'es'} no existe${r.d.sin_pareja === 1 ? '' : 'n'} con ese nombre allá y no se copiaron` : '';
+  recToast(direccion === 'traer'
+    ? `Receta copiada de ${x.sucursal_nombre} (${r.d.ingredientes} ingrediente${r.d.ingredientes === 1 ? '' : 's'})${aviso}`
+    : `Receta enviada a ${x.sucursal_nombre} (${r.d.ingredientes} ingrediente${r.d.ingredientes === 1 ? '' : 's'})${aviso}`, null, null, aviso ? 6500 : 3200);
+}
+REC_ACC['gemelo-traer'] = (el) => recConfirmarCopia('traer', el.dataset.gid);
+REC_ACC['gemelo-mandar'] = (el) => recConfirmarCopia('mandar', el.dataset.gid);
 
 // ---------- Grupo nuevo ----------
 REC_ACC['nuevo-grupo'] = () => {

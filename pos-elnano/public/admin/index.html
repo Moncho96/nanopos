@@ -285,9 +285,14 @@
   .rec-grupo-top .rec-seg { width: 100%; display: flex; }
   .rec-grupo-top .rec-seg button { flex: 1; padding: 8px 11px; }
   .rec-grupo-top input.nombre { flex: 1; min-width: 0; font-weight: 800; font-size: 15px; padding: 7px 9px; border: 1px solid transparent; border-radius: 8px; background: #f5f5f5; color: inherit; font-family: inherit; }
+  .rec-gem { border-radius: 10px; padding: 9px 11px; font-size: 12.5px; line-height: 1.5; margin: 8px 0; }
+  .rec-gem.ok { background: #e8f3ff; color: #1b4a7a; } .rec-gem.neutro { background: #f3f3f3; color: #666; } .rec-gem.aviso { background: #fff3cd; color: #7a5c00; }
+  .rec-gem .acc { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .rec-compartir { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12.5px; color: #666; margin: 4px 0 8px; }
+  body.dark .rec-gem.ok { background: #16304a; color: #9cc6f0; } body.dark .rec-gem.neutro { background: #2a2a2a; color: #aaa; } body.dark .rec-gem.aviso { background: #3a3218; color: #f0d98c; } body.dark .rec-compartir { color: #aaa; }
   .rec-sec-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .rec-sec-top h3 { margin: 0; }
-  .rec-seg { display: inline-flex; border: 1px solid #ddd; border-radius: 10px; overflow: hidden; }
+  .rec-seg { display: inline-flex; flex-shrink: 0; border: 1px solid #ddd; border-radius: 10px; overflow: hidden; }
   .rec-seg button { border: none; background: #fff; padding: 7px 11px; font-size: 12px; font-weight: 700; cursor: pointer; color: #666; font-family: inherit; }
   .rec-seg button.activo { background: #b8232f; color: #fff; }
   .rec-opcion { background: #fafafa; border-radius: 10px; padding: 10px; margin-top: 8px; }
