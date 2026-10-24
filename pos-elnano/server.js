@@ -2059,9 +2059,9 @@ app.post('/api/clientes', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (telefono) DO UPDATE SET
          nombre = EXCLUDED.nombre,
-         direccion = EXCLUDED.direccion,
-         colonia = EXCLUDED.colonia,
-         notas = EXCLUDED.notas
+         direccion = COALESCE(NULLIF(EXCLUDED.direccion, ''), clientes.direccion),
+         colonia = COALESCE(NULLIF(EXCLUDED.colonia, ''), clientes.colonia),
+         notas = COALESCE(EXCLUDED.notas, clientes.notas)
        RETURNING *`,
       [nombre, telefono, direccion, colonia, notas]
     );
@@ -2249,7 +2249,8 @@ app.post('/api/pedidos', async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const costoEnvio = Number(costo_envio) || 0;
+    // El envío solo aplica a pedidos a domicilio (en los demás el cliente recoge en sucursal) y nunca puede ser negativo
+    const costoEnvio = tipo === 'domicilio' ? Math.max(0, Number(costo_envio) || 0) : 0;
     const total = esDidi ? 0 : items.reduce((sum, it) => sum + it.cantidad * it.precio_unitario, 0) + costoEnvio; // DiDi: sin monto
 
     const fechaNegocioHoy = fechaNegocioActualJS();
