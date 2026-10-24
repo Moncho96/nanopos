@@ -414,6 +414,7 @@ function prepararCamposCliente() {
   document.getElementById('ticket-cliente-direccion').style.display = esDomicilioNuevo ? 'block' : 'none';
   document.getElementById('ticket-cliente-colonia').style.display = esDomicilioNuevo ? 'block' : 'none';
   document.getElementById('ticket-envio-info').style.display = 'none';
+  document.getElementById('ticket-cliente-colonia').value = ''; // que no arrastre la colonia de un pedido anterior
 
   if (esDomicilioNuevo) renderColoniaOptionsTicket();
 }
@@ -432,7 +433,10 @@ function renderColoniaOptionsTicket() {
 document.getElementById('ticket-cliente-colonia').addEventListener('change', () => {
   const infoEl = document.getElementById('ticket-envio-info');
   const coloniaEscrita = document.getElementById('ticket-cliente-colonia').value;
-  const match = state.envios.find((e) => e.colonia === coloniaEscrita);
+  // El envío solo existe en pedidos a domicilio: en los demás (para llevar, mesa, mostrador) el cliente recoge en sucursal
+  const esDomicilio = !!ticketState && ticketState.tipo === 'domicilio';
+  const match = esDomicilio ? state.envios.find((e) => e.colonia === coloniaEscrita) : null;
+  if (!ticketState) return;
   if (match) {
     ticketState.costoEnvio = Number(match.costo);
     infoEl.textContent = `🚚 Envío: $${ticketState.costoEnvio.toFixed(2)}`;
@@ -594,20 +598,23 @@ function renderTicketPanel() {
 
     cont.innerHTML =
       items
-        .map((it) => {
+        .map((it, i) => {
           const detalle = it.opciones_seleccionadas.map((o) => o.nombre).join(', ');
           return `
         <div class="ticket-item">
           <div class="ticket-item-top">
             <span>${it.cantidad}x ${it.nombre}${detalle ? `<br><small>${detalle}</small>` : ''}${it.notas ? `<br><small style="color:#a97800">📝 ${escapeHtml(it.notas)}</small>` : ''}</span>
-            <span>$${(it.precio * it.cantidad).toFixed(2)}<button data-clave="${it._clave}">×</button></span>
+            <span>$${(it.precio * it.cantidad).toFixed(2)}<button data-pos="${i}">×</button></span>
           </div>
         </div>`;
         })
         .join('') || '<p style="color:#999;font-size:13px;text-align:center;margin-top:20px">Agrega productos del menú</p>';
 
-    cont.querySelectorAll('button[data-clave]').forEach((btn) => {
-      btn.addEventListener('click', () => quitarDelCarritoTicket(btn.dataset.clave));
+    cont.querySelectorAll('button[data-pos]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const renglon = ticketState.carrito[Number(btn.dataset.pos)];
+        if (renglon) quitarDelCarritoTicket(renglon._clave);
+      });
     });
   } else {
     const itemsActivos = ticketState.pedidoData.items.filter((it) => !it.cancelado);
@@ -788,8 +795,11 @@ async function crearPedidoDesdeTicket() {
 
   const sucursal_id = Number(document.getElementById('sucursal-select').value);
   const telefono = document.getElementById('ticket-cliente-telefono').value.trim();
-  const direccion = document.getElementById('ticket-cliente-direccion').value.trim();
-  const colonia = document.getElementById('ticket-cliente-colonia').value;
+  const esDomicilio = ticketState.tipo === 'domicilio';
+  // Dirección, colonia y envío solo aplican a domicilio. En los demás pedidos viajan vacíos (el servidor no pisa
+  // con vacíos lo que el cliente ya tenía guardado).
+  const direccion = esDomicilio ? document.getElementById('ticket-cliente-direccion').value.trim() : '';
+  const colonia = esDomicilio ? document.getElementById('ticket-cliente-colonia').value : '';
 
   let cliente_id = null;
   if (telefono) {
@@ -819,7 +829,7 @@ async function crearPedidoDesdeTicket() {
       cliente_nombre: nombre,
       tipo: ticketState.tipo,
       items,
-      costo_envio: ticketState.costoEnvio || 0,
+      costo_envio: esDomicilio ? ticketState.costoEnvio || 0 : 0,
     }),
   });
 
@@ -1886,7 +1896,7 @@ async function buscarClientePorTelefono() {
   const cliente = clientes[0];
   document.getElementById('ticket-cliente-nombre').value = cliente.nombre || '';
   if (cliente.direccion) document.getElementById('ticket-cliente-direccion').value = cliente.direccion;
-  if (cliente.colonia) {
+  if (cliente.colonia && ticketState && ticketState.tipo === 'domicilio') {
     const selectColonia = document.getElementById('ticket-cliente-colonia');
     if ([...selectColonia.options].some((op) => op.value === cliente.colonia)) {
       selectColonia.value = cliente.colonia;
@@ -1999,15 +2009,18 @@ function renderDidiPie() {
   const total = didiState.carrito.reduce((s, l) => s + l.cantidad, 0);
   document.getElementById('didi-lineas').innerHTML = didiState.carrito.length
     ? didiState.carrito
-        .map((l) => {
+        .map((l, i) => {
           const detalle = l.opciones_seleccionadas.map((o) => o.nombre).join(', ');
           return `<div class="didi-linea"><div class="txt">${escapeHtml(l.nombre)}${detalle ? `<small>${escapeHtml(detalle)}</small>` : ''}</div>
-            <button data-clave="${escapeHtml(l._clave)}" data-delta="-1">−</button><span class="cant">${l.cantidad}</span><button data-clave="${escapeHtml(l._clave)}" data-delta="1">+</button></div>`;
+            <button data-pos="${i}" data-delta="-1">−</button><span class="cant">${l.cantidad}</span><button data-pos="${i}" data-delta="1">+</button></div>`;
         })
         .join('')
     : '<div class="didi-vacio">Toca los productos que pidió el cliente de DiDi</div>';
-  document.querySelectorAll('#didi-lineas button[data-clave]').forEach((b) =>
-    b.addEventListener('click', () => cambiarCantidadDidi(b.dataset.clave, Number(b.dataset.delta)))
+  document.querySelectorAll('#didi-lineas button[data-pos]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const l = didiState.carrito[Number(b.dataset.pos)];
+      if (l) cambiarCantidadDidi(l._clave, Number(b.dataset.delta));
+    })
   );
   const btn = document.getElementById('btn-didi-registrar');
   btn.disabled = !total || didiState.enviando;
