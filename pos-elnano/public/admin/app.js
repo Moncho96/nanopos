@@ -570,9 +570,36 @@ document.getElementById('envio-costo').addEventListener('input', (e) => {
 
 async function cargarEnvios() {
   const sucursalId = document.getElementById('sucursal-select').value;
-  state.envios = await fetch(`/api/envios?sucursal_id=${sucursalId}`).then((r) => r.json());
+  // base=1: aquí se edita la tarifa NORMAL (sin el recargo de lluvia)
+  state.envios = await fetch(`/api/envios?sucursal_id=${sucursalId}&base=1`).then((r) => r.json());
   renderEnvios();
+  cargarLluviaAdmin();
 }
+
+async function cargarLluviaAdmin() {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  const t = await fetch(`/api/tarifa-lluvia?sucursal_id=${sucursalId}`).then((r) => r.json()).catch(() => null);
+  if (!t) return;
+  document.getElementById('admin-chk-lluvia').checked = !!t.activa;
+  document.getElementById('admin-lluvia-monto').value = String(t.monto);
+  document.getElementById('admin-lluvia-nota').textContent = t.disponible === false
+    ? 'Falta correr db/migracion-tarifa-lluvia.sql en la base de datos para poder usar la tarifa de lluvia.'
+    : `Los costos de la tabla son la tarifa normal; con lluvia activa se les suma $${t.monto} al cobrar.`;
+}
+
+async function guardarLluviaAdmin(cambios) {
+  const r = await fetch('/api/tarifa-lluvia', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursal_id: Number(document.getElementById('sucursal-select').value), ...cambios }),
+  });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) alert(d.error || 'No se pudo guardar la tarifa de lluvia');
+  cargarLluviaAdmin();
+}
+document.getElementById('admin-chk-lluvia').addEventListener('change', (e) => guardarLluviaAdmin({ activa: e.target.checked }));
+document.getElementById('admin-lluvia-guardar').addEventListener('click', () => guardarLluviaAdmin({ monto: document.getElementById('admin-lluvia-monto').value }));
+document.getElementById('admin-lluvia-monto').addEventListener('input', (e) => { e.target.value = e.target.value.replace(/[^0-9.]/g, ''); });
 
 function renderEnvios() {
   document.getElementById('envios-tabla-body').innerHTML =
