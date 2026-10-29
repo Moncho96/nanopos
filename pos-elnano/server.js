@@ -124,6 +124,7 @@ const RUTAS_API_PUBLICAS_EXACTAS = new Set([
   'GET /api/categorias',
   'GET /api/productos',
   'GET /api/envios',
+  'GET /api/tarifa-lluvia',
   'POST /api/resenas',
   'POST /api/clientes',
   'POST /api/pedidos',
@@ -2447,7 +2448,8 @@ app.patch('/api/pedidos/:id/tipo', verificarSucursalDelPedido, async (req, res) 
       [pedido.sucursal_id, colonia]
     );
     if (!envioRows.length) return res.status(400).json({ error: 'No hay costo de envío configurado para esa colonia' });
-    costoEnvio = Number(envioRows[0].costo);
+    const lluvia = await tarifaLluvia(pedido.sucursal_id);
+    costoEnvio = Number(envioRows[0].costo) + (lluvia.activa ? lluvia.monto : 0); // con tarifa de lluvia, el mismo recargo
 
     if (pedido.cliente_id) {
       await pool.query('UPDATE clientes SET colonia = $1, direccion = COALESCE($2, direccion) WHERE id = $3', [colonia, direccion || null, pedido.cliente_id]);
@@ -3446,13 +3448,63 @@ app.post('/api/corte/cerrar', requierePuesto('cajero'), async (req, res) => {
 });
 
 // ---------- Costos de envío por colonia ----------
+// ---------- Tarifa de lluvia ----------
+// Los repartidores cobran de más cuando llueve: mientras esté activa, se suma un recargo al envío de los pedidos a domicilio.
+// Se guarda por sucursal en la tabla `configuracion` (claves lluvia_activa_<id> y lluvia_monto_<id>). Si falta la tabla
+// (migración sin correr), la tarifa simplemente no existe y todo funciona como siempre.
+async function tarifaLluvia(sucursalId, db = pool) {
+  const id = Number(sucursalId);
+  try {
+    const { rows } = await db.query('SELECT clave, valor FROM configuracion WHERE clave = ANY($1)', [[`lluvia_activa_${id}`, `lluvia_monto_${id}`]]);
+    const v = Object.fromEntries(rows.map((r) => [r.clave, r.valor]));
+    const monto = v[`lluvia_monto_${id}`] === undefined ? 10 : Number(v[`lluvia_monto_${id}`]);
+    return { activa: v[`lluvia_activa_${id}`] === 'true', monto: Number.isFinite(monto) && monto >= 0 ? monto : 10, disponible: true };
+  } catch (e) {
+    if (e.code === '42P01') return { activa: false, monto: 10, disponible: false };
+    throw e;
+  }
+}
+app.get('/api/tarifa-lluvia', async (req, res) => {
+  res.json(await tarifaLluvia(req.query.sucursal_id));
+});
+app.put('/api/tarifa-lluvia', requierePuesto('cajero'), async (req, res) => {
+  const sucursalId = Number(req.body.sucursal_id);
+  if (!Number.isInteger(sucursalId) || sucursalId < 1) return res.status(400).json({ error: 'Falta la sucursal' });
+  if (req.empleado.sucursal_id && Number(req.empleado.sucursal_id) !== sucursalId) return res.status(403).json({ error: 'No tienes acceso a esa sucursal' });
+  const { rows: suc } = await pool.query('SELECT 1 FROM sucursales WHERE id = $1', [sucursalId]);
+  if (!suc.length) return res.status(404).json({ error: 'Sucursal no encontrada' });
+  const actual = await tarifaLluvia(sucursalId);
+  if (!actual.disponible) return res.status(400).json({ error: 'Falta correr db/migracion-tarifa-lluvia.sql en la base de datos' });
+  let monto = actual.monto;
+  if (req.body.monto !== undefined) {
+    const m = typeof req.body.monto === 'string' && req.body.monto.trim() === '' ? NaN : Number(req.body.monto);
+    if (!Number.isFinite(m) || m < 0 || m > 500 || Math.round(m * 100) / 100 !== m) return res.status(400).json({ error: 'El recargo debe ser un monto de 0 a 500 pesos' });
+    monto = m;
+  }
+  const activa = req.body.activa === undefined ? actual.activa : !!req.body.activa;
+  for (const [clave, valor] of [[`lluvia_activa_${sucursalId}`, String(activa)], [`lluvia_monto_${sucursalId}`, String(monto)]]) {
+    await pool.query(
+      `INSERT INTO configuracion (clave, valor) VALUES ($1, $2)
+       ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_en = now()`,
+      [clave, valor]
+    );
+  }
+  const estado = { sucursal_id: sucursalId, activa, monto, disponible: true };
+  io.to(`sucursal_${sucursalId}`).emit('tarifa_lluvia', estado); // las demás cajas se enteran solas
+  res.json(estado);
+});
+
 app.get('/api/envios', async (req, res) => {
   const { sucursal_id } = req.query;
   const { rows } = await pool.query(
     'SELECT * FROM costos_envio WHERE sucursal_id = $1 ORDER BY colonia',
     [sucursal_id]
   );
-  res.json(rows);
+  // Con la tarifa de lluvia activa, el `costo` que ven el POS y los clientes YA incluye el recargo (costo_base es el normal).
+  // Administración pide ?base=1 para editar la tarifa normal sin mezclarla con el recargo.
+  const lluvia = req.query.base === '1' ? { activa: false } : await tarifaLluvia(sucursal_id);
+  const recargo = lluvia.activa ? lluvia.monto : 0;
+  res.json(rows.map((r) => ({ ...r, costo_base: r.costo, recargo_lluvia: recargo, costo: (Number(r.costo) + recargo).toFixed(2) })));
 });
 
 app.post('/api/envios', requierePuesto(), async (req, res) => {
