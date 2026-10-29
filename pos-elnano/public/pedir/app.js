@@ -125,10 +125,26 @@ document.querySelectorAll('.tipo-servicio-btn').forEach((btn) => {
     if (state.tipo !== 'domicilio') {
       state.costoEnvio = 0;
       document.getElementById('envio-info-web').style.display = 'none';
+    } else {
+      refrescarEnviosWeb(); // la tarifa de lluvia pudo cambiar mientras armaba su pedido
     }
     actualizarTotalWeb();
   });
 });
+
+// Al elegir domicilio se piden de nuevo los costos de envío vigentes (con o sin tarifa de lluvia) y se conserva la colonia elegida
+async function refrescarEnviosWeb() {
+  const col = document.getElementById('cliente-colonia');
+  const elegida = col.value;
+  try {
+    state.envios = await fetch(`/api/envios?sucursal_id=${document.getElementById('sucursal-select').value}`).then((r) => r.json());
+  } catch (e) {
+    return;
+  }
+  renderColoniaOptions();
+  col.value = elegida;
+  col.dispatchEvent(new Event('change'));
+}
 
 function renderColoniaOptions() {
   const sel = document.getElementById('cliente-colonia');
@@ -146,7 +162,7 @@ document.getElementById('cliente-colonia').addEventListener('change', () => {
   const match = state.envios.find((e) => e.colonia === document.getElementById('cliente-colonia').value);
   if (match) {
     state.costoEnvio = Number(match.costo);
-    infoEl.textContent = `🛵 Costo de envío: $${state.costoEnvio.toFixed(2)}`;
+    infoEl.textContent = `🛵 Costo de envío: $${state.costoEnvio.toFixed(2)}${Number(match.recargo_lluvia) > 0 ? ` (incluye $${Number(match.recargo_lluvia).toFixed(0)} por lluvia 🌧️)` : ''}`;
     infoEl.style.display = 'block';
   } else {
     state.costoEnvio = 0;
@@ -280,18 +296,22 @@ function renderCartItems() {
   const cont = document.getElementById('cart-items');
   cont.innerHTML =
     state.carrito
-      .map((it) => {
+      .map((it, i) => {
         const detalle = it.opciones_seleccionadas.map((o) => o.nombre).join(', ');
         return `
       <div class="cart-item">
         <span>${it.cantidad}x ${it.nombre}${detalle ? `<br><small>${detalle}</small>` : ''}</span>
-        <span>$${(it.precio * it.cantidad).toFixed(2)} <button data-clave="${it._clave}">×</button></span>
+        <span>$${(it.precio * it.cantidad).toFixed(2)} <button data-pos="${i}">×</button></span>
       </div>`;
       })
       .join('') || '<p style="color:#999;text-align:center">Tu carrito está vacío</p>';
 
-  cont.querySelectorAll('button[data-clave]').forEach((btn) => {
-    btn.addEventListener('click', () => quitarDelCarrito(btn.dataset.clave));
+  // El botón identifica el renglón por su posición (la clave de texto lleva comillas que rompían el atributo HTML)
+  cont.querySelectorAll('button[data-pos]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const renglon = state.carrito[Number(btn.dataset.pos)];
+      if (renglon) quitarDelCarrito(renglon._clave);
+    });
   });
   actualizarTotalWeb();
 }
