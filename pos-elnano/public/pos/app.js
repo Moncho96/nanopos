@@ -116,11 +116,13 @@ async function cargarInicial() {
     state.categorias = await fetch(`/api/categorias?sucursal_id=${select.value}`).then((r) => r.json());
     state.productos = await fetch(`/api/productos?sucursal_id=${select.value}`).then((r) => r.json());
     state.categoriaActivaOverlay = state.categorias[0]?.id ?? null;
+    cargarTarifaLluvia({ recargarEnvios: false });
     cargarPedidosYContar();
   });
 
   state.categoriaActivaOverlay = state.categorias[0]?.id ?? null;
   state.envios = await fetch(`/api/envios?sucursal_id=${select.value}`).then((r) => r.json());
+  cargarTarifaLluvia({ recargarEnvios: false }); // los envíos ya vienen con el recargo si está activa
 
   cargarPedidosYContar();
 }
@@ -439,7 +441,7 @@ document.getElementById('ticket-cliente-colonia').addEventListener('change', () 
   if (!ticketState) return;
   if (match) {
     ticketState.costoEnvio = Number(match.costo);
-    infoEl.textContent = `🚚 Envío: $${ticketState.costoEnvio.toFixed(2)}`;
+    infoEl.textContent = `🚚 Envío: $${ticketState.costoEnvio.toFixed(2)}${Number(match.recargo_lluvia) > 0 ? ` (incluye $${Number(match.recargo_lluvia).toFixed(0)} por lluvia 🌧️)` : ''}`;
     infoEl.style.display = 'block';
   } else {
     ticketState.costoEnvio = 0;
@@ -1177,7 +1179,10 @@ async function confirmarCobro(filasCalculadas) {
 
 // ==================== MENÚ LATERAL (Corte / Envíos) ====================
 
-document.getElementById('btn-menu').addEventListener('click', () => document.getElementById('drawer-overlay').classList.add('abierto'));
+document.getElementById('btn-menu').addEventListener('click', () => {
+  document.getElementById('drawer-overlay').classList.add('abierto');
+  cargarTarifaLluvia(); // por si otra caja la cambió
+});
 
 
 document.getElementById('drawer-overlay').addEventListener('click', (e) => {
@@ -1453,6 +1458,69 @@ function ocultarBotonesRestringidosDelTicket() {
   });
 }
 
+// ==================== TARIFA DE LLUVIA ====================
+// Los repartidores cobran de más cuando llueve. Con el check activo, el envío de los pedidos a domicilio suma el recargo
+// (el servidor ya devuelve los costos de /api/envios con el recargo incluido). Es por sucursal y se comparte entre cajas.
+const tarifaLluviaEstado = { activa: false, monto: 10, disponible: true };
+
+// Si hay un pedido a domicilio abierto con colonia elegida, se vuelve a calcular su envío con la tarifa vigente
+function refrescarEnviosEnTicket() {
+  if (!ticketState || ticketState.modo !== 'nuevo' || ticketState.tipo !== 'domicilio') return;
+  const sel = document.getElementById('ticket-cliente-colonia');
+  const elegida = sel.value;
+  renderColoniaOptionsTicket();
+  sel.value = elegida;
+  sel.dispatchEvent(new Event('change'));
+}
+
+async function aplicarTarifaLluvia(t, recargarEnvios = true) {
+  const cambio = tarifaLluviaEstado.activa !== !!t.activa || Number(tarifaLluviaEstado.monto) !== Number(t.monto);
+  tarifaLluviaEstado.activa = !!t.activa;
+  tarifaLluviaEstado.monto = Number(t.monto) || 0;
+  tarifaLluviaEstado.disponible = t.disponible !== false;
+  document.getElementById('chk-lluvia').checked = tarifaLluviaEstado.activa;
+  document.getElementById('lluvia-monto').textContent = `+$${tarifaLluviaEstado.monto.toFixed(tarifaLluviaEstado.monto % 1 ? 2 : 0)}`;
+  const badge = document.getElementById('badge-lluvia');
+  badge.textContent = `🌧️ +$${tarifaLluviaEstado.monto.toFixed(tarifaLluviaEstado.monto % 1 ? 2 : 0)}`;
+  badge.style.display = tarifaLluviaEstado.activa ? '' : 'none';
+  document.body.classList.toggle('con-lluvia', tarifaLluviaEstado.activa);
+  if (cambio && recargarEnvios) {
+    const sucursalId = document.getElementById('sucursal-select').value;
+    state.envios = await fetch(`/api/envios?sucursal_id=${sucursalId}`).then((r) => r.json());
+    refrescarEnviosEnTicket();
+  }
+}
+
+async function cargarTarifaLluvia({ recargarEnvios = true } = {}) {
+  const sucursalId = document.getElementById('sucursal-select').value;
+  if (!sucursalId) return;
+  try {
+    const t = await fetch(`/api/tarifa-lluvia?sucursal_id=${sucursalId}`).then((r) => r.json());
+    await aplicarTarifaLluvia(t, recargarEnvios);
+  } catch (e) {
+    /* sin conexión: se queda como estaba */
+  }
+}
+
+document.getElementById('chk-lluvia').addEventListener('change', async (e) => {
+  const activa = e.target.checked;
+  e.target.disabled = true;
+  const r = await fetch('/api/tarifa-lluvia', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sucursal_id: Number(document.getElementById('sucursal-select').value), activa }),
+  });
+  const d = await r.json().catch(() => ({}));
+  e.target.disabled = false;
+  if (!r.ok) {
+    e.target.checked = !activa; // no se pudo: el check regresa a como estaba
+    avisoPos(d.error || 'No se pudo cambiar la tarifa de lluvia', true);
+    return;
+  }
+  await aplicarTarifaLluvia(d);
+  avisoPos(activa ? `🌧️ Tarifa de lluvia activada: +$${d.monto} en los envíos a domicilio` : 'Tarifa de lluvia desactivada');
+});
+
 // ==================== TIEMPO REAL: refresca sola cuando llega un pedido (ej. de la web) ====================
 
 const socketPos = io();
@@ -1539,6 +1607,11 @@ socketPos.on('nuevo_pedido', (pedido) => {
   avisarNuevoPedidoPos(pedido);
   cargarPedidosYContar();
   if (document.getElementById('overlay-historial').classList.contains('abierto')) cargarHistorial();
+});
+
+socketPos.on('tarifa_lluvia', (t) => {
+  if (String(t.sucursal_id) !== document.getElementById('sucursal-select').value) return;
+  aplicarTarifaLluvia(t);
 });
 
 socketPos.on('pedido_actualizado', () => {

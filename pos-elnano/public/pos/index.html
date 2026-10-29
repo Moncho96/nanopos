@@ -21,6 +21,14 @@
   .logo-header { height: 30px; width: 30px; border-radius: 50%; vertical-align: middle; margin-right: 6px; object-fit: cover; }
   header .right { display: flex; gap: 8px; align-items: center; }
   select { padding: 8px; border-radius: 6px; border: none; font-size: 14px; }
+  /* con el letrero de lluvia visible, el selector de sucursal cede espacio para que no se salga el botón ☰ */
+  body.con-lluvia header select { min-width: 0; max-width: 96px; text-overflow: ellipsis; }
+  header .right .icon-btn { flex-shrink: 0; }
+  @media (max-width: 380px) { body.con-lluvia header select { max-width: 76px; } .badge-lluvia { padding: 2px 6px; font-size: 11px; } }
+  .badge-lluvia { background: #e7f3ff; color: #0056b3; border-radius: 12px; padding: 3px 8px; font-size: 12px; font-weight: 700; white-space: nowrap; }
+  .drawer label.item { display: flex; align-items: center; gap: 10px; width: 100%; padding: 14px 10px; font-size: 15px; cursor: pointer; border-radius: 8px; box-sizing: border-box; }
+  .drawer label.item:hover { background: #f4f4f4; }
+  body.dark .drawer label.item:hover { background: #2a2a2a; }
   .icon-btn { background: rgba(255,255,255,0.15); border: none; color: white; width: 36px; height: 36px; border-radius: 8px; font-size: 16px; cursor: pointer; }
 
   /* ---------- Tabs de tipo + nuevo pedido ---------- */
@@ -289,6 +297,7 @@
 <header>
   <h1><img src="logo.png" class="logo-header" alt="El Nano" /></h1>
   <div class="right">
+    <span class="badge-lluvia" id="badge-lluvia" style="display:none" title="Tarifa de lluvia activa: se suma al envío a domicilio">🌧️ +$10</span>
     <select id="sucursal-select"></select>
     <button class="icon-btn" id="btn-ir-kds" title="Ir a Cocina">🍳</button>
     <button class="icon-btn" id="btn-modo-oscuro" title="Cambiar modo claro/oscuro">🌙</button>
@@ -403,6 +412,7 @@
     <h3>Menú</h3>
     <button class="item" id="btn-abrir-historial">🕓 Historial de pedidos</button>
     <button class="item" id="btn-abrir-corte">📊 Corte de caja</button>
+    <label class="item" id="item-lluvia"><input type="checkbox" id="chk-lluvia" style="width:20px;height:20px;accent-color:#0056b3;flex-shrink:0" /> <span>🌧️ Tarifa de lluvia <b id="lluvia-monto" style="color:#0056b3">+$10</b><small style="display:block;color:#888;font-size:11px;font-weight:400">Suma al envío a domicilio</small></span></label>
     <button class="item" id="btn-ir-admin" style="border-top:1px solid #eee;margin-top:6px;padding-top:14px">⚙️ Administración</button>
     <div id="drawer-usuario" style="padding:10px 4px;font-size:12px;color:#999;border-top:1px solid #eee;margin-top:6px"></div>
     <button class="item" id="btn-cerrar-sesion" style="color:#b8232f">🚪 Cerrar sesión</button>
